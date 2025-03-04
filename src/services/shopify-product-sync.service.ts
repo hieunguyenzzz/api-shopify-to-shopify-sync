@@ -108,7 +108,7 @@ export class ShopifyProductSyncService {
   }
 
   // Resolve and sync product to Shopify
-  async resolveProductSync(productData: MutationProductSetArgs) {
+  async syncProduct(productData: MutationProductSetArgs) {
     try {
       console.log(`🚀 Syncing product to Shopify: ${productData.input.title}`);
       console.log(productData.input.variants?.map((variant) => variant.optionValues));
@@ -153,7 +153,7 @@ export class ShopifyProductSyncService {
         console.log(`\n📍 Processing Product ${index + 1}/${productsToSync.length}`);
         try {
           const preparedProductData = await this.prepareProductData(product);
-          const syncedProduct = await this.resolveProductSync(preparedProductData);
+          const syncedProduct = await this.syncProduct(preparedProductData);
           syncResults.push(syncedProduct);
         } catch (productSyncError) {
           console.error(`❌ Failed to sync product ${product.title}`, productSyncError);
