@@ -1,8 +1,3 @@
-import { 
-  MutationProductSetArgs, 
-  ProductInput 
-} from './shopify-generated';
-
 export interface ExternalProduct {
   id: string;
   handle?: string;
@@ -15,6 +10,10 @@ export interface ExternalProduct {
     price: string;
     compareAtPrice?: string;
     inventoryQuantity?: number;
+    selectedOptions: {
+      name: string;
+      value: string;
+    }[];
   }[];
   options?: {
     name: string;

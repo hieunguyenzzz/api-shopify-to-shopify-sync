@@ -1,4 +1,5 @@
 import axios from 'axios';
+import dotenv from 'dotenv';
 import { GraphQLClient } from 'graphql-request';
 import { 
   MutationProductSetArgs, 
@@ -12,6 +13,7 @@ import {
   PRODUCT_BY_HANDLE_QUERY 
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
+dotenv.config();
 
 export class ShopifyProductSyncService {
   private shopifyAccessToken: string;
@@ -83,8 +85,7 @@ export class ShopifyProductSyncService {
       productOptions: externalProduct.options?.map(option => ({
         name: option.name,
         values: option.values.map(value => ({
-          name: value,
-          id: value
+          name: value
         }))
       })),
     };
@@ -99,12 +100,7 @@ export class ShopifyProductSyncService {
       productInput.variants = externalProduct.variants.map((variant, index) => ({
         price: variant.price,
         compareAtPrice: variant.compareAtPrice,
-        optionValues: externalProduct.options 
-          ? externalProduct.options.map((option, optionIndex) => ({
-              name: option.name,
-              value: option.values[index] || option.values[0]
-            }))
-          : []
+        optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name}))
       }));
     }
 
@@ -115,12 +111,12 @@ export class ShopifyProductSyncService {
   async resolveProductSync(productData: MutationProductSetArgs) {
     try {
       console.log(`🚀 Syncing product to Shopify: ${productData.input.title}`);
-      
+      console.log(productData.input.variants?.map((variant) => variant.optionValues));
       const response = await this.graphqlClient.request<{
         productSet: ProductSetPayload
       }>(
         PRODUCT_SET_MUTATION, 
-        productData
+        {...productData, synchronous: true}
       );
 
       const result = response.productSet;
@@ -140,7 +136,7 @@ export class ShopifyProductSyncService {
   }
 
   // Main sync method
-  async syncProducts() {
+  async syncProducts(limit?: number) {
     console.log('🌟 Starting Shopify Product Sync Process');
     const startTime = Date.now();
 
@@ -148,10 +144,13 @@ export class ShopifyProductSyncService {
       // Fetch external products
       const externalProducts = await this.fetchExternalProducts();
 
+      // Apply limit if specified
+      const productsToSync = limit ? externalProducts.slice(0, limit) : externalProducts;
+
       // Sync each product
       const syncResults = [];
-      for (const [index, product] of externalProducts.entries()) {
-        console.log(`\n📍 Processing Product ${index + 1}/${externalProducts.length}`);
+      for (const [index, product] of productsToSync.entries()) {
+        console.log(`\n📍 Processing Product ${index + 1}/${productsToSync.length}`);
         try {
           const preparedProductData = await this.prepareProductData(product);
           const syncedProduct = await this.resolveProductSync(preparedProductData);
@@ -164,9 +163,9 @@ export class ShopifyProductSyncService {
 
       const endTime = Date.now();
       console.log(`\n🏁 Sync Complete
-- Total Products: ${externalProducts.length}
+- Total Products: ${productsToSync.length}
 - Successfully Synced: ${syncResults.length}
-- Failed Products: ${externalProducts.length - syncResults.length}
+- Failed Products: ${productsToSync.length - syncResults.length}
 - Total Time: ${(endTime - startTime) / 1000} seconds`);
 
       return syncResults;

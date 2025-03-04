@@ -1,15 +1,20 @@
 export const PRODUCT_SET_MUTATION = `
-  mutation productSet($input: ProductInput!) {
-    productSet(input: $input) {
+  mutation productSet($input: ProductSetInput!, $synchronous: Boolean!) {
+    productSet(input: $input, synchronous: $synchronous) {
       product {
+        id    
+      }
+      productSetOperation {
         id
-        title
-        productType
-        handle
-        descriptionHtml
-        vendor
+        status
+        userErrors {
+          code
+          field
+          message
+        }
       }
       userErrors {
+        code
         field
         message
       }
@@ -17,24 +22,6 @@ export const PRODUCT_SET_MUTATION = `
   }
 `;
 
-export const PRODUCT_CREATE_MUTATION = `
-  mutation productCreate($input: ProductInput!) {
-    productCreate(input: $input) {
-      product {
-        id
-        title
-        productType
-        handle
-        descriptionHtml
-        vendor
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
 
 export const PRODUCT_BY_HANDLE_QUERY = `
   query productByIdentifier($identifier: ProductIdentifierInput!) {

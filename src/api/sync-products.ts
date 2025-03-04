@@ -3,7 +3,9 @@ import { shopifyProductSyncService } from '../services/shopify-product-sync.serv
 
 export const syncProducts = async (req: Request, res: Response) => {
   try {
-    const syncResults = await shopifyProductSyncService.syncProducts();
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    
+    const syncResults = await shopifyProductSyncService.syncProducts(limit);
     
     res.status(200).json({
       message: 'Product sync completed successfully',
