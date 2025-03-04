@@ -5,6 +5,7 @@ import {
 
 export interface ExternalProduct {
   id: string;
+  handle?: string;
   title: string;
   description: string;
   productType: string;
