@@ -1,10 +1,12 @@
 import { GraphQLClient } from 'graphql-request';
+import dotenv from 'dotenv';
+dotenv.config();
 
 export const createShopifyGraphQLClient = (
-  shopUrl: string, 
-  shopifyToken: string, 
-  apiVersion: string = '2025-01'
 ): GraphQLClient => {
+  let apiVersion = '2025-01';
+  let shopUrl = process.env.SHOPIFY_APP_URL || '';
+  let shopifyToken = process.env.SHOPIFY_TOKEN || '';
   return new GraphQLClient(
     `https://${shopUrl}/admin/api/${apiVersion}/graphql.json`, 
     {

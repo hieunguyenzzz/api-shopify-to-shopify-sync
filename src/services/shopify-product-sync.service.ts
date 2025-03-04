@@ -5,28 +5,23 @@ import {
   MutationProductSetArgs, 
   Product, 
   ProductSetInput,
-  ProductSetPayload
+  ProductSetPayload,
+  FileCreateInput
 } from '../types/shopify-generated';
 import { ExternalProduct } from '../types/shopify-sync';
 import { 
   PRODUCT_SET_MUTATION, 
-  PRODUCT_BY_HANDLE_QUERY 
+  PRODUCT_BY_HANDLE_QUERY,
+  FILE_CREATE_MUTATION
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
-dotenv.config();
+
 
 export class ShopifyProductSyncService {
-  private shopifyAccessToken: string;
-  private shopifyShopUrl: string;
   private graphqlClient: GraphQLClient;
 
   constructor() {
-    this.shopifyAccessToken = process.env.SHOPIFY_TOKEN || '';
-    this.shopifyShopUrl = process.env.SHOPIFY_APP_URL || '';
-    this.graphqlClient = createShopifyGraphQLClient(
-      this.shopifyShopUrl, 
-      this.shopifyAccessToken
-    );
+    this.graphqlClient = createShopifyGraphQLClient();
   }
 
   // Fetch products from external API
@@ -78,6 +73,7 @@ export class ShopifyProductSyncService {
     
     const productInput: ProductSetInput = {
       title: externalProduct.title,
+      handle: externalProduct.handle,
       descriptionHtml: externalProduct.description,
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
@@ -97,11 +93,49 @@ export class ShopifyProductSyncService {
     // Handle variants if exists
     if (externalProduct.variants && externalProduct.variants.length > 0) {
       console.log(`📦 Preparing ${externalProduct.variants.length} variants`);
-      productInput.variants = externalProduct.variants.map((variant, index) => ({
+      productInput.variants = externalProduct.variants.map((variant) => ({
         price: variant.price,
         compareAtPrice: variant.compareAtPrice,
         optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name}))
       }));
+    }
+
+    // Upload global images metafield
+    const globalImagesMetafield = externalProduct.metafields?.find(
+      (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
+    );
+
+    if (globalImagesMetafield) {
+      try {
+        // Parse the image URLs from the metafield value
+        const imageUrls: string[] = JSON.parse(globalImagesMetafield.value);
+        
+        // Prepare file create inputs for upload
+        const fileInputs: FileCreateInput[] = imageUrls.map((url: string) => ({
+          originalSource: url,
+          contentType: 'IMAGE'
+        }));
+
+        // Upload multiple files and get their media IDs
+        const mediaIds = await this.uploadMultipleFiles(fileInputs);
+
+        // Add metafields to the product input
+        if (!productInput.metafields) {
+          productInput.metafields = [];
+        }
+
+        // Add global.images metafield with media IDs
+        productInput.metafields.push({
+          namespace: 'global',
+          key: 'images',
+          type: 'list.file_reference',
+          value: JSON.stringify(mediaIds)
+        });
+
+        console.log(`📸 Uploaded ${mediaIds.length} images for global.images metafield`);
+      } catch (error) {
+        console.error('❌ Error processing global images metafield:', error);
+      }
     }
 
     return { input: productInput };
@@ -172,6 +206,48 @@ export class ShopifyProductSyncService {
     } catch (error) {
       console.error('❌ Complete product sync failed:', error);
       throw error;
+    }
+  }
+
+  async uploadFile(fileInput: FileCreateInput): Promise<string | null> {
+    try {
+      const response = await this.graphqlClient.request<{
+        fileCreate: {
+          files: Array<{ id: string }>;
+          userErrors: Array<{ field: string; message: string }>;
+        }
+      }>(FILE_CREATE_MUTATION, { files: [fileInput] });
+
+      if (response.fileCreate.userErrors.length > 0) {
+        console.log('File Upload', response.fileCreate.userErrors);
+        return null;
+      }
+
+      return response.fileCreate.files[0]?.id || null;
+    } catch (error) {
+        console.log('File Upload', error);
+      return null;
+    }
+  }
+
+  async uploadMultipleFiles(files: FileCreateInput[]): Promise<string[]> {
+    try {
+      const response = await this.graphqlClient.request<{
+        fileCreate: {
+          files: Array<{ id: string }>;
+          userErrors: Array<{ field: string; message: string }>;
+        }
+      }>(FILE_CREATE_MUTATION, { files });
+
+      if (response.fileCreate.userErrors.length > 0) {
+        console.log('Multiple File Upload', response.fileCreate.userErrors);
+        return [];
+      }
+
+      return response.fileCreate.files.map(file => file.id).filter(Boolean);
+    } catch (error) {
+        console.log('Multiple File Upload', error);
+      return [];
     }
   }
 }

@@ -13,10 +13,24 @@ export interface ExternalProduct {
     selectedOptions: {
       name: string;
       value: string;
+    }[],
+    metafields: {
+      namespace: string;
+      key: string;
+      value: string;
+      type: string;
+      originalValue?: string;
     }[];
   }[];
   options?: {
     name: string;
     values: string[];
+  }[];
+  metafields?: {
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+    originalValue?: string;
   }[];
 }

@@ -33,4 +33,19 @@ export const PRODUCT_BY_HANDLE_QUERY = `
   }
 `;
 
+export const FILE_CREATE_MUTATION = `
+mutation fileCreate($files: [FileCreateInput!]!) {
+  fileCreate(files: $files) {
+    files {
+      id
+      alt
+      createdAt
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}`;
+
 // Add more Shopify-related mutations as needed 
