@@ -145,7 +145,6 @@ export class ShopifyProductSyncService {
   async syncProduct(productData: MutationProductSetArgs) {
     try {
       console.log(`🚀 Syncing product to Shopify: ${productData.input.title}`);
-      console.log(productData.input.variants?.map((variant) => variant.optionValues));
       const response = await this.graphqlClient.request<{
         productSet: ProductSetPayload
       }>(
@@ -160,8 +159,6 @@ export class ShopifyProductSyncService {
         console.error(`❌ Sync error for product ${productData.input.title}: ${errorMessage}`);
         throw new Error(errorMessage);
       }
-
-      console.log(`✅ Successfully synced product: ${result.product?.title}`);
       return result.product;
     } catch (error) {
       console.error('❌ Error syncing product to Shopify:', error);
