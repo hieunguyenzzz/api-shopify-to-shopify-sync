@@ -70,7 +70,7 @@ export class ShopifyProductSyncService {
     
     // Check if product already exists
     const existingProduct = await this.checkProductByHandle(externalProduct.handle || '');
-    
+    const allImages = externalProduct.variants?.flatMap(variant => JSON.parse(variant.metafields?.find(m => m.namespace === 'global' && m.key === 'images')?.value || '[]')) || [];
     const productInput: ProductSetInput = {
       title: externalProduct.title,
       handle: externalProduct.handle,
@@ -78,6 +78,10 @@ export class ShopifyProductSyncService {
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
       tags: externalProduct.tags,
+      files: allImages.map(image => ({
+        originalSource: image,
+        contentType: 'IMAGE',
+      })),
       productOptions: externalProduct.options?.map(option => ({
         name: option.name,
         values: option.values.map(value => ({
@@ -93,11 +97,20 @@ export class ShopifyProductSyncService {
     // Handle variants if exists
     if (externalProduct.variants && externalProduct.variants.length > 0) {
       console.log(`📦 Preparing ${externalProduct.variants.length} variants`);
-      productInput.variants = externalProduct.variants.map((variant) => ({
-        price: variant.price,
-        compareAtPrice: variant.compareAtPrice,
-        optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name}))
-      }));
+     
+      productInput.variants = externalProduct.variants.map((variant) => {
+        let imageMetafield = variant.metafields?.find(
+          (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
+        );
+        let images = imageMetafield ? JSON.parse(imageMetafield.value) : [];
+        return {      
+            sku: variant.sku,            
+            file: images.length > 0 ? {originalSource: images[0], contentType: 'IMAGE'} : null,
+            price: variant.price,          
+            compareAtPrice: variant.compareAtPrice,
+            optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name})),        
+        }
+      });
     }
 
     // Upload global images metafield

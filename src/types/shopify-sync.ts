@@ -6,7 +6,13 @@ export interface ExternalProduct {
   productType: string;
   vendor: string;
   tags?: string[];
+  images: {
+    altText: string;
+    url: string;
+  }[];
   variants?: {
+    sku: string;
+    title: string;
     price: string;
     compareAtPrice?: string;
     inventoryQuantity?: number;

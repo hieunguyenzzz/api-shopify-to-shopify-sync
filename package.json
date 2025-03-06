@@ -3,7 +3,7 @@
     "generate:shopify-types": "graphql-codegen --config scripts/generate-shopify-types.js",
     "prepare": "npm run generate:shopify-types",
     "start": "ts-node src/index.ts",
-    "dev": "nodemon --exec ts-node src/index.ts"
+    "dev": "ts-node src/index.ts"
   },
   "dependencies": {
     "@types/axios": "^0.14.4",
