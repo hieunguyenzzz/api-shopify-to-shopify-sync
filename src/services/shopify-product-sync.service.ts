@@ -6,7 +6,8 @@ import {
   Product, 
   ProductSetInput,
   ProductSetPayload,
-  FileCreateInput
+  FileCreateInput,
+  FileContentType
 } from '../types/shopify-generated';
 import { ExternalProduct } from '../types/shopify-sync';
 import { 
@@ -70,7 +71,7 @@ export class ShopifyProductSyncService {
     
     // Check if product already exists
     const existingProduct = await this.checkProductByHandle(externalProduct.handle || '');
-    const allImages = externalProduct.variants?.flatMap(variant => JSON.parse(variant.metafields?.find(m => m.namespace === 'global' && m.key === 'images')?.value || '[]')) || [];
+    const allImages = externalProduct.images.map(image => image.url);
     const productInput: ProductSetInput = {
       title: externalProduct.title,
       handle: externalProduct.handle,
@@ -78,6 +79,11 @@ export class ShopifyProductSyncService {
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
       tags: externalProduct.tags,
+      templateSuffix: externalProduct.templateSuffix,
+      seo: {
+        title: externalProduct.seo.title,
+        description: externalProduct.seo.description,
+      },
       files: allImages.map(image => ({
         originalSource: image,
         contentType: 'IMAGE',
@@ -90,12 +96,19 @@ export class ShopifyProductSyncService {
       })),
     };
 
-    if (allImages.length === 0) {
-      productInput.files = externalProduct.images.map(image => ({
+    
+      const productImages = externalProduct.images.map(image => ({
         originalSource: image.url,
-        contentType: 'IMAGE',
-      }));
-    }
+        contentType: 'IMAGE' as FileContentType,
+      }))
+
+      let variantImages = externalProduct.variants?.filter((variant: any) => variant.image?.url).map((variant: any) => ({
+        originalSource: variant.image.url,
+        contentType: 'IMAGE' as FileContentType,
+      })) || [];
+
+      productInput.files = [...productImages, ...variantImages];
+    
 
     if (existingProduct) {
       productInput.id = existingProduct.id;
@@ -112,7 +125,7 @@ export class ShopifyProductSyncService {
         let images = imageMetafield ? JSON.parse(imageMetafield.value) : [];
         return {      
             sku: variant.sku,            
-            file: images.length > 0 ? {originalSource: images[0], contentType: 'IMAGE'} : null,
+            file: variant.image?.url ? {originalSource: variant.image.url, contentType: 'IMAGE'} : null,
             price: variant.price,          
             compareAtPrice: variant.compareAtPrice,
             optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name})),        

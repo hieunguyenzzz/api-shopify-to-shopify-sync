@@ -5,17 +5,26 @@ export interface ExternalProduct {
   description: string;
   productType: string;
   vendor: string;
-  tags?: string[];
+  tags: string[];
   images: {
     altText: string;
     url: string;
   }[];
+  seo: {
+    title: string;
+    description: string;
+  };
+  templateSuffix: string;
   variants?: {
     sku: string;
     title: string;
     price: string;
     compareAtPrice?: string;
     inventoryQuantity?: number;
+    image: {
+      altText: string;
+      url: string;
+    };
     selectedOptions: {
       name: string;
       value: string;
