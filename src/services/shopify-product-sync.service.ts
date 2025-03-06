@@ -90,6 +90,13 @@ export class ShopifyProductSyncService {
       })),
     };
 
+    if (allImages.length === 0) {
+      productInput.files = externalProduct.images.map(image => ({
+        originalSource: image.url,
+        contentType: 'IMAGE',
+      }));
+    }
+
     if (existingProduct) {
       productInput.id = existingProduct.id;
     }
