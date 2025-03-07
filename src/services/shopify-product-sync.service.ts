@@ -7,7 +7,8 @@ import {
   ProductSetInput,
   ProductSetPayload,
   FileCreateInput,
-  FileContentType
+  FileContentType,
+  ProductStatus
 } from '../types/shopify-generated';
 import { ExternalProduct } from '../types/shopify-sync';
 import { 
@@ -79,6 +80,7 @@ export class ShopifyProductSyncService {
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
       tags: externalProduct.tags,
+      status: externalProduct.status as ProductStatus,
       templateSuffix: externalProduct.templateSuffix,
       seo: {
         title: externalProduct.seo.title,

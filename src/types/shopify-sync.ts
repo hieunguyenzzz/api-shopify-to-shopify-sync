@@ -6,6 +6,7 @@ export interface ExternalProduct {
   productType: string;
   vendor: string;
   tags: string[];
+  status: string;
   images: {
     altText: string;
     url: string;
