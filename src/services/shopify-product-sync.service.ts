@@ -8,7 +8,8 @@ import {
   ProductSetPayload,
   FileCreateInput,
   FileContentType,
-  ProductStatus
+  ProductStatus,
+  ProductVariantSetInput
 } from '../types/shopify-generated';
 import { ExternalProduct } from '../types/shopify-sync';
 import { 
@@ -18,19 +19,23 @@ import {
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 
+// Load environment variables
+dotenv.config();
 
 export class ShopifyProductSyncService {
   private graphqlClient: GraphQLClient;
+  private externalProductsApiUrl: string;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
+    this.externalProductsApiUrl = process.env.EXTERNAL_PRODUCTS_API_URL || 'https://shopify-store-data-resolver.hieunguyen.dev/api/products';
   }
 
   // Fetch products from external API
   async fetchExternalProducts(): Promise<ExternalProduct[]> {
     try {
       console.log('🔍 Fetching external products...');
-      const response = await axios.get('https://shopify-store-data-resolver.hieunguyen.dev/api/products');
+      const response = await axios.get(this.externalProductsApiUrl);
       console.log(`✅ Successfully fetched ${response.data.products.length} products`);
       return response.data.products;
     } catch (error) {
@@ -66,13 +71,32 @@ export class ShopifyProductSyncService {
     }
   }
 
-  // Prepare data for Shopify product set mutation
+  // Main function to prepare product data
   async prepareProductData(externalProduct: ExternalProduct): Promise<MutationProductSetArgs> {
     console.log(`🔧 Preparing product for sync: ${externalProduct.title}`);
     
     // Check if product already exists
     const existingProduct = await this.checkProductByHandle(externalProduct.handle || '');
-    const allImages = externalProduct.images.map(image => image.url);
+    
+    // Create base product input
+    const productInput = this.createBaseProductInput(externalProduct, existingProduct);
+    
+    // Handle product images
+    this.addProductImages(productInput, externalProduct);
+    
+    // Handle variants if exists
+    if (externalProduct.variants && externalProduct.variants.length > 0) {
+      productInput.variants = await this.prepareVariants(externalProduct.variants);
+    }
+
+    // Handle product metafields
+    await this.processProductMetafields(productInput, externalProduct);
+
+    return { input: productInput };
+  }
+
+  // Create base product input with core properties
+  private createBaseProductInput(externalProduct: ExternalProduct, existingProduct: Product | null): ProductSetInput {
     const productInput: ProductSetInput = {
       title: externalProduct.title,
       handle: externalProduct.handle,
@@ -86,10 +110,6 @@ export class ShopifyProductSyncService {
         title: externalProduct.seo.title,
         description: externalProduct.seo.description,
       },
-      files: allImages.map(image => ({
-        originalSource: image,
-        contentType: 'IMAGE',
-      })),
       productOptions: externalProduct.options?.map(option => ({
         name: option.name,
         values: option.values.map(value => ({
@@ -98,62 +118,99 @@ export class ShopifyProductSyncService {
       })),
     };
 
-    
-      const productImages = externalProduct.images.map(image => ({
-        originalSource: image.url,
-        contentType: 'IMAGE' as FileContentType,
-      }))
-
-      let variantImages = externalProduct.variants?.filter((variant: any) => variant.image?.url).map((variant: any) => ({
-        originalSource: variant.image.url,
-        contentType: 'IMAGE' as FileContentType,
-      })) || [];
-
-      productInput.files = [...productImages, ...variantImages];
-    
-
     if (existingProduct) {
       productInput.id = existingProduct.id;
     }
 
-    // Handle variants if exists
-    if (externalProduct.variants && externalProduct.variants.length > 0) {
-      console.log(`📦 Preparing ${externalProduct.variants.length} variants`);
-     
-      productInput.variants = externalProduct.variants.map((variant) => {
-        let imageMetafield = variant.metafields?.find(
-          (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
-        );
-        let images = imageMetafield ? JSON.parse(imageMetafield.value) : [];
-        return {      
-            sku: variant.sku,            
-            file: variant.image?.url ? {originalSource: variant.image.url, contentType: 'IMAGE'} : null,
-            price: variant.price,          
-            compareAtPrice: variant.compareAtPrice,
-            optionValues: variant.selectedOptions.map((option) => ({name: option.value, optionName: option.name})),        
-        }
-      });
-    }
+    return productInput;
+  }
 
-    // Upload global images metafield
+  // Add product images
+  private addProductImages(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+    const productImages = externalProduct.images.map(image => ({
+      originalSource: image.url,
+      contentType: FileContentType.Image,
+    }));
+
+    const variantImages = externalProduct.variants?.filter((variant: any) => variant.image?.url)
+      .map((variant: any) => ({
+        originalSource: variant.image.url,
+        contentType: FileContentType.Image,
+      })) || [];
+
+    productInput.files = [...productImages, ...variantImages];
+  }
+
+  // Prepare variants data
+  private async prepareVariants(variants: any[]): Promise<ProductVariantSetInput[]> {
+    console.log(`📦 Preparing ${variants.length} variants`);
+    
+    return Promise.all(variants.map(async (variant) => {
+      return this.prepareVariantData(variant);
+    }));
+  }
+
+  // Prepare individual variant data
+  private async prepareVariantData(variant: any): Promise<ProductVariantSetInput> {
+    const variantData: ProductVariantSetInput = {
+      sku: variant.sku,            
+      file: variant.image?.url ? {
+        originalSource: variant.image.url, 
+        contentType: FileContentType.Image
+      } : undefined,
+      price: variant.price,          
+      compareAtPrice: variant.compareAtPrice,
+      optionValues: variant.selectedOptions.map((option: any) => ({
+        name: option.value, 
+        optionName: option.name
+      })),
+      metafields: []
+    };
+    
+    await this.processVariantMetafields(variantData, variant);
+    
+    return variantData;
+  }
+
+  // Process variant metafields
+  private async processVariantMetafields(variantData: ProductVariantSetInput, variant: any): Promise<void> {
+    const variantImagesMetafield = variant.metafields?.find(
+      (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
+    );
+    
+    if (variantImagesMetafield) {
+      try {
+        const mediaIds = await this.processImagesMetafield(variantImagesMetafield);
+        
+        // Add global.images metafield with media IDs
+        if (!variantData.metafields) {
+          variantData.metafields = [];
+        }
+        
+        variantData.metafields.push({
+          namespace: 'global',
+          key: 'images',
+          type: 'list.file_reference',
+          value: JSON.stringify(mediaIds)
+        });
+
+        console.log(`📸 Uploaded ${mediaIds.length} images for variant ${variant.sku} global.images metafield`);
+      } catch (error) {
+        console.error(`❌ Error processing variant ${variant.sku} global.images metafield:`, error);
+      }
+    }
+  }
+
+  // Process product metafields
+  private async processProductMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const globalImagesMetafield = externalProduct.metafields?.find(
       (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
     );
 
     if (globalImagesMetafield) {
       try {
-        // Parse the image URLs from the metafield value
-        const imageUrls: string[] = JSON.parse(globalImagesMetafield.value);
+        const mediaIds = await this.processImagesMetafield(globalImagesMetafield);
         
-        // Prepare file create inputs for upload
-        const fileInputs: FileCreateInput[] = imageUrls.map((url: string) => ({
-          originalSource: url,
-          contentType: 'IMAGE'
-        }));
-
-        // Upload multiple files and get their media IDs
-        const mediaIds = await this.uploadMultipleFiles(fileInputs);
-
         // Add metafields to the product input
         if (!productInput.metafields) {
           productInput.metafields = [];
@@ -172,8 +229,21 @@ export class ShopifyProductSyncService {
         console.error('❌ Error processing global images metafield:', error);
       }
     }
+  }
 
-    return { input: productInput };
+  // Process images metafield and upload files
+  private async processImagesMetafield(imagesMetafield: { value: string }): Promise<string[]> {
+    // Parse the image URLs from the metafield value
+    const imageUrls: string[] = JSON.parse(imagesMetafield.value);
+    
+    // Prepare file create inputs for upload
+    const fileInputs: FileCreateInput[] = imageUrls.map((url: string) => ({
+      originalSource: url,
+      contentType: FileContentType.Image
+    }));
+
+    // Upload multiple files and get their media IDs
+    return this.uploadMultipleFiles(fileInputs);
   }
 
   // Resolve and sync product to Shopify
@@ -190,7 +260,7 @@ export class ShopifyProductSyncService {
       const result = response.productSet;
 
       if (result.userErrors && result.userErrors.length > 0) {
-        const errorMessage = result.userErrors.map((err) => err.message).join(', ');
+        const errorMessage = result.userErrors.map((err: { message: string }) => err.message).join(', ');
         console.error(`❌ Sync error for product ${productData.input.title}: ${errorMessage}`);
         throw new Error(errorMessage);
       }
@@ -276,7 +346,7 @@ export class ShopifyProductSyncService {
         return [];
       }
 
-      return response.fileCreate.files.map(file => file.id).filter(Boolean);
+      return response.fileCreate.files.map((file: { id: string }) => file.id).filter(Boolean);
     } catch (error) {
         console.log('Multiple File Upload', error);
       return [];
