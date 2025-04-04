@@ -1,9 +1,9 @@
 import { shopifyProductSyncService } from '../services/shopify-product-sync.service';
-import { variantIdMapper } from '../utils/variant-id-mapper';
+import { variantIdMappingService } from '../services/variant-id-mapping.service';
 
 // Initialize the variant mapper
 async function initialize() {
-  await variantIdMapper.initialize();
+  await variantIdMappingService.initialize();
 }
 
 // Get and display all mappings
@@ -75,30 +75,35 @@ async function main() {
   const command = args[0]?.toLowerCase();
   const param = args[1];
 
-  // Initialize the ID mapper
-  await initialize();
-  
-  switch (command) {
-    case 'product':
-      if (!param) {
-        console.error('❌ Error: Please provide a product handle');
-        process.exit(1);
-      }
-      await showProductMappings(param);
-      break;
-      
-    case 'sku':
-      if (!param) {
-        console.error('❌ Error: Please provide a SKU');
-        process.exit(1);
-      }
-      await showVariantMapping(param);
-      break;
-      
-    case 'all':
-    default:
-      await showAllMappings();
-      break;
+  try {
+    // Initialize the ID mapper
+    await initialize();
+    
+    switch (command) {
+      case 'product':
+        if (!param) {
+          console.error('❌ Error: Please provide a product handle');
+          process.exit(1);
+        }
+        await showProductMappings(param);
+        break;
+        
+      case 'sku':
+        if (!param) {
+          console.error('❌ Error: Please provide a SKU');
+          process.exit(1);
+        }
+        await showVariantMapping(param);
+        break;
+        
+      case 'all':
+      default:
+        await showAllMappings();
+        break;
+    }
+  } finally {
+    // Close MongoDB connection
+    await variantIdMappingService.close();
   }
 }
 

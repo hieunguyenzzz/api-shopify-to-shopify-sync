@@ -19,7 +19,9 @@ import {
   PRODUCT_WITH_VARIANTS_QUERY
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
-import { variantIdMapper } from '../utils/variant-id-mapper';
+import { variantIdMappingService } from './variant-id-mapping.service';
+import mongoDBService from './mongodb.service';
+import { generateFileHash, getMimeTypeFromUrl } from '../utils/file-hash.util';
 
 // Load environment variables
 dotenv.config();
@@ -322,8 +324,8 @@ export class ShopifyProductSyncService {
         const externalVariant = externalProduct.variants?.find(v => v.sku === shopifyVariant.sku);
         
         if (externalVariant) {
-          await variantIdMapper.addMapping(
-            externalVariant.sku, // Using SKU as external ID since we don't have an explicit ID
+          await this.trackSyncedVariant(
+            externalVariant.sku,
             shopifyVariant.id,
             productHandle,
             shopifyVariant.sku
@@ -336,6 +338,25 @@ export class ShopifyProductSyncService {
     }
   }
 
+  // Track each successfully synced product
+  private async trackSyncedVariant(
+    externalVariantId: string,
+    shopifyVariantId: string,
+    productHandle: string,
+    sku: string
+  ): Promise<void> {
+    try {
+      await variantIdMappingService.saveVariantMapping({
+        externalVariantId,
+        shopifyVariantId,
+        productHandle,
+        sku
+      });
+    } catch (error) {
+      console.error('❌ Error tracking synced variant:', error);
+    }
+  }
+
   // Main sync method
   async syncProducts(limit?: number) {
     console.log('🌟 Starting Shopify Product Sync Process');
@@ -343,7 +364,7 @@ export class ShopifyProductSyncService {
 
     try {
       // Initialize the variant ID mapper
-      await variantIdMapper.initialize();
+      await variantIdMappingService.initialize();
       
       // Fetch external products
       const externalProducts = await this.fetchExternalProducts();
@@ -381,6 +402,21 @@ export class ShopifyProductSyncService {
 
   async uploadFile(fileInput: FileCreateInput): Promise<string | null> {
     try {
+      // Generate file hash for caching
+      const url = fileInput.originalSource;
+      const contentType = fileInput.contentType as string || getMimeTypeFromUrl(url);
+      const fileHash = generateFileHash(url, contentType);
+      
+      // Check if file is already cached in MongoDB
+      const cachedFile = await mongoDBService.findFileByHash(fileHash);
+      
+      if (cachedFile) {
+        console.log(`File cache hit for ${url} - using existing Shopify file ID: ${cachedFile.shopifyFileId}`);
+        return cachedFile.shopifyFileId;
+      }
+      
+      // File not in cache, proceed with upload to Shopify
+      console.log(`File cache miss for ${url} - uploading to Shopify`);
       const response = await this.graphqlClient.request<{
         fileCreate: {
           files: Array<{ id: string }>;
@@ -392,48 +428,54 @@ export class ShopifyProductSyncService {
         console.log('File Upload', response.fileCreate.userErrors);
         return null;
       }
+      
+      const fileId = response.fileCreate.files[0]?.id || null;
+      
+      // Cache the file information in MongoDB if upload was successful
+      if (fileId) {
+        await mongoDBService.saveFileMapping(fileHash, fileId, url, contentType);
+        console.log(`Cached new file with hash ${fileHash} and Shopify ID ${fileId}`);
+      }
 
-      return response.fileCreate.files[0]?.id || null;
+      return fileId;
     } catch (error) {
         console.log('File Upload', error);
-      return null;
+        return null;
     }
   }
 
   async uploadMultipleFiles(files: FileCreateInput[]): Promise<string[]> {
     try {
-      const response = await this.graphqlClient.request<{
-        fileCreate: {
-          files: Array<{ id: string }>;
-          userErrors: Array<{ field: string; message: string }>;
+      const fileIds: string[] = [];
+      
+      // Process each file individually to leverage the caching in uploadFile
+      for (const fileInput of files) {
+        const fileId = await this.uploadFile(fileInput);
+        if (fileId) {
+          fileIds.push(fileId);
         }
-      }>(FILE_CREATE_MUTATION, { files });
-
-      if (response.fileCreate.userErrors.length > 0) {
-        console.log('Multiple File Upload', response.fileCreate.userErrors);
-        return [];
       }
-
-      return response.fileCreate.files.map((file: { id: string }) => file.id).filter(Boolean);
+      
+      return fileIds;
     } catch (error) {
         console.log('Multiple File Upload', error);
-      return [];
+        return [];
     }
   }
   
   // Get variant ID mapping for a specific SKU
   async getVariantIdMapping(sku: string): Promise<string | null> {
-    return variantIdMapper.getShopifyVariantId(sku);
+    return variantIdMappingService.getShopifyVariantId(sku);
   }
   
   // Get all variant ID mappings for a product
   async getProductVariantMappings(productHandle: string): Promise<any[]> {
-    return variantIdMapper.getMappingsByProduct(productHandle);
+    return variantIdMappingService.getMappingsByProduct(productHandle);
   }
   
   // Get all variant ID mappings
   async getAllVariantMappings(): Promise<Record<string, any>> {
-    return variantIdMapper.getAllMappings();
+    return variantIdMappingService.getAllMappings();
   }
 }
 
