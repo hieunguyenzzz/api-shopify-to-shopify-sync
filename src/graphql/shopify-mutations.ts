@@ -29,6 +29,15 @@ export const PRODUCT_BY_HANDLE_QUERY = `
       id
       handle
       title
+      variants(first: 50) {
+        edges {
+          node {
+            id
+            sku
+            title
+          }
+        }
+      }
     }
   }
 `;
@@ -47,5 +56,25 @@ mutation fileCreate($files: [FileCreateInput!]!) {
     }
   }
 }`;
+
+export const PRODUCT_WITH_VARIANTS_QUERY = `
+  query productWithVariants($id: ID!) {
+    product(id: $id) {
+      id
+      handle
+      title
+      variants(first: 50) {
+        edges {
+          node {
+            id
+            sku
+            title
+            price
+          }
+        }
+      }
+    }
+  }
+`;
 
 // Add more Shopify-related mutations as needed 

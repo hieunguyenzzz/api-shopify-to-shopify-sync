@@ -15,9 +15,11 @@ import { ExternalProduct } from '../types/shopify-sync';
 import { 
   PRODUCT_SET_MUTATION, 
   PRODUCT_BY_HANDLE_QUERY,
-  FILE_CREATE_MUTATION
+  FILE_CREATE_MUTATION,
+  PRODUCT_WITH_VARIANTS_QUERY
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
+import { variantIdMapper } from '../utils/variant-id-mapper';
 
 // Load environment variables
 dotenv.config();
@@ -86,7 +88,7 @@ export class ShopifyProductSyncService {
     
     // Handle variants if exists
     if (externalProduct.variants && externalProduct.variants.length > 0) {
-      productInput.variants = await this.prepareVariants(externalProduct.variants);
+      productInput.variants = await this.prepareVariants(externalProduct.variants, externalProduct.handle || '');
     }
 
     // Handle product metafields
@@ -142,16 +144,16 @@ export class ShopifyProductSyncService {
   }
 
   // Prepare variants data
-  private async prepareVariants(variants: any[]): Promise<ProductVariantSetInput[]> {
+  private async prepareVariants(variants: any[], productHandle: string): Promise<ProductVariantSetInput[]> {
     console.log(`📦 Preparing ${variants.length} variants`);
     
     return Promise.all(variants.map(async (variant) => {
-      return this.prepareVariantData(variant);
+      return this.prepareVariantData(variant, productHandle);
     }));
   }
 
   // Prepare individual variant data
-  private async prepareVariantData(variant: any): Promise<ProductVariantSetInput> {
+  private async prepareVariantData(variant: any, productHandle: string): Promise<ProductVariantSetInput> {
     const variantData: ProductVariantSetInput = {
       sku: variant.sku,            
       file: variant.image?.url ? {
@@ -264,10 +266,73 @@ export class ShopifyProductSyncService {
         console.error(`❌ Sync error for product ${productData.input.title}: ${errorMessage}`);
         throw new Error(errorMessage);
       }
+      
+      // Get the synced product with variants to map IDs
+      if (result.product?.id) {
+        await this.mapProductVariantIds(result.product.id, productData.input.handle || '');
+      }
+      
       return result.product;
     } catch (error) {
       console.error('❌ Error syncing product to Shopify:', error);
       throw error;
+    }
+  }
+
+  // Map product variant IDs between external and Shopify systems
+  private async mapProductVariantIds(shopifyProductId: string, productHandle: string): Promise<void> {
+    try {
+      // Get full product data with variants from Shopify
+      const response = await this.graphqlClient.request<{
+        product: {
+          id: string;
+          handle: string;
+          variants: {
+            edges: Array<{
+              node: {
+                id: string;
+                sku: string;
+                title: string;
+              }
+            }>
+          }
+        }
+      }>(PRODUCT_WITH_VARIANTS_QUERY, { id: shopifyProductId });
+      
+      const shopifyProduct = response.product;
+      
+      if (!shopifyProduct || !shopifyProduct.variants) {
+        console.warn(`⚠️ Could not retrieve variants for product ${shopifyProductId}`);
+        return;
+      }
+      
+      // Get external product data to map variant IDs
+      const externalProducts = await this.fetchExternalProducts();
+      const externalProduct = externalProducts.find(p => p.handle === productHandle);
+      
+      if (!externalProduct) {
+        console.warn(`⚠️ Could not find external product with handle ${productHandle}`);
+        return;
+      }
+      
+      console.log(`🗺️ Mapping variant IDs for product: ${shopifyProduct.handle}`);
+      
+      // Map variants by SKU
+      for (const { node: shopifyVariant } of shopifyProduct.variants.edges) {
+        const externalVariant = externalProduct.variants?.find(v => v.sku === shopifyVariant.sku);
+        
+        if (externalVariant) {
+          await variantIdMapper.addMapping(
+            externalVariant.sku, // Using SKU as external ID since we don't have an explicit ID
+            shopifyVariant.id,
+            productHandle,
+            shopifyVariant.sku
+          );
+          console.log(`✅ Mapped variant: ${shopifyVariant.sku} (${shopifyVariant.id})`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error mapping variant IDs:', error);
     }
   }
 
@@ -277,6 +342,9 @@ export class ShopifyProductSyncService {
     const startTime = Date.now();
 
     try {
+      // Initialize the variant ID mapper
+      await variantIdMapper.initialize();
+      
       // Fetch external products
       const externalProducts = await this.fetchExternalProducts();
 
@@ -351,6 +419,21 @@ export class ShopifyProductSyncService {
         console.log('Multiple File Upload', error);
       return [];
     }
+  }
+  
+  // Get variant ID mapping for a specific SKU
+  async getVariantIdMapping(sku: string): Promise<string | null> {
+    return variantIdMapper.getShopifyVariantId(sku);
+  }
+  
+  // Get all variant ID mappings for a product
+  async getProductVariantMappings(productHandle: string): Promise<any[]> {
+    return variantIdMapper.getMappingsByProduct(productHandle);
+  }
+  
+  // Get all variant ID mappings
+  async getAllVariantMappings(): Promise<Record<string, any>> {
+    return variantIdMapper.getAllMappings();
   }
 }
 
