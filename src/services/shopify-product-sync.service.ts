@@ -86,11 +86,19 @@ export class ShopifyProductSyncService {
     const productInput = this.createBaseProductInput(externalProduct, existingProduct);
     
     // Handle product images
-    this.addProductImages(productInput, externalProduct);
+    if (!existingProduct) {
+      this.addProductImages(productInput, externalProduct);
+    }
     
     // Handle variants if exists
     if (externalProduct.variants && externalProduct.variants.length > 0) {
       productInput.variants = await this.prepareVariants(externalProduct.variants, externalProduct.handle || '');
+    }
+
+    if (existingProduct) {
+      productInput.variants = productInput.variants?.map((variant) => {
+        return {...variant, file: undefined};
+      });
     }
 
     // Handle product metafields
