@@ -225,6 +225,7 @@ export class ShopifyProductSyncService {
     
     // Add custom metafields
     this.addCustomTextMetafields(productInput, externalProduct);
+    this.addRichTextMetafields(productInput, externalProduct);
     //this.addCustomNumberMetafields(productInput, externalProduct);
     //this.addCustomFileReferenceMetafields(productInput, externalProduct);
     this.addJudgemeMetafields(productInput, externalProduct);
@@ -271,6 +272,44 @@ export class ShopifyProductSyncService {
 
         if (typeof value === 'string' && value.includes('soundboxstore.com')) {
           value = value.replace('soundboxstore.com', 'quelldesign.com');
+        }
+        
+        productInput.metafields.push({
+          namespace: metafield.namespace,
+          key: metafield.key,
+          type: metafield.type,
+          value
+        });
+      }
+    }
+  }
+
+  // Add rich text metafields
+  private addRichTextMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+    const richTextMetafields = [
+      { namespace: 'custom', key: 'additional_content', type: 'rich_text_field' },
+      { namespace: 'custom', key: 'additional_heading', type: 'single_line_text_field' }
+    ];
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    for (const metafield of richTextMetafields) {
+      const metafieldData = externalProduct.metafields?.find(
+        m => m.namespace === metafield.namespace && m.key === metafield.key
+      );
+
+      if (metafieldData) {
+        let value = metafieldData.value;
+        
+        // Replace Soundbox Store with Quell Design if present
+        if (typeof value === 'string' && value.includes('Soundbox Store')) {
+          value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');        
+        }
+
+        if (typeof value === 'string' && value.includes('soundboxstore.com')) {
+          value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
         }
         
         productInput.metafields.push({
