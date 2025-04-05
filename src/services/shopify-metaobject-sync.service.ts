@@ -132,7 +132,7 @@ export class ShopifyMetaobjectSyncService {
     const processedFields = externalMetaobject.fields.map(field => {
       return {
         key: field.key,
-        value: field.value
+        value: field.value.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design")
       };
     });
     
@@ -149,7 +149,7 @@ export class ShopifyMetaobjectSyncService {
         input: metaobjectInput
       };
     }
-
+    // when creating a new metaobject, we need to include the type
     return { input: {...metaobjectInput, type: externalMetaobject.type} };
   }
 
