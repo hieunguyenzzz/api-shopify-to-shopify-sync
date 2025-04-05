@@ -77,4 +77,64 @@ export const PRODUCT_WITH_VARIANTS_QUERY = `
   }
 `;
 
+export const PAGE_CREATE_MUTATION = `
+  mutation pageCreate($page: PageCreateInput!) {
+    pageCreate(page: $page) {
+      page {
+        id
+        title
+        handle
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const PAGE_UPDATE_MUTATION = `
+  mutation pageUpdate($id: ID!, $page: PageUpdateInput!) {
+    pageUpdate(id: $id, page: $page) {
+      page {
+        id
+        title
+        handle
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const PAGES_QUERY = `
+  query getPages($query: String, $first: Int) {
+    pages(query: $query, first: $first) {
+      edges {
+        node {
+          id
+          title
+          handle
+          body
+          bodySummary
+          createdAt
+          updatedAt        
+          metafields(first: 50) {
+            edges {
+              node {
+                id
+                namespace
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 

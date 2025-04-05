@@ -1,7 +1,9 @@
 import express from 'express';
 import syncProducts from './api/sync-products';
+import syncPages from './api/sync-pages';
 import mongoDBService from './services/mongodb.service';
 import { variantIdMappingService } from './services/variant-id-mapping.service';
+import { pageMappingService } from './services/page-mapping.service';
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -20,6 +22,10 @@ const PORT = process.env.PORT || 3000;
     // Initialize variant mapping service
     await variantIdMappingService.initialize();
     console.log('Variant mapping MongoDB connection initialized successfully');
+    
+    // Initialize page mapping service
+    await pageMappingService.initialize();
+    console.log('Page mapping MongoDB connection initialized successfully');
   } catch (error) {
     console.error('Failed to initialize MongoDB connections:', error);
     // Continue application startup even if MongoDB fails
@@ -32,6 +38,7 @@ app.use(express.json());
 
 // Routes
 app.get('/api/sync-products', syncProducts);
+app.get('/api/sync-pages', syncPages);
 
 // Start server
 app.listen(PORT, () => {
@@ -47,6 +54,9 @@ process.on('SIGINT', async () => {
     
     await variantIdMappingService.close();
     console.log('Variant mapping MongoDB connection closed');
+    
+    await pageMappingService.close();
+    console.log('Page mapping MongoDB connection closed');
   } catch (error) {
     console.error('Error closing MongoDB connections:', error);
   }

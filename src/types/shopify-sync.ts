@@ -50,3 +50,24 @@ export interface ExternalProduct {
     originalValue?: string;
   }[];
 }
+
+export interface ExternalPage {
+  id: string;
+  handle: string;
+  title: string;
+  bodyHtml: string;
+  author: string;
+  publishedAt?: string;
+  templateSuffix?: string;
+  seo?: {
+    title: string;
+    description: string;
+  };
+  metafields?: {
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+    originalValue?: string;
+  }[];
+}

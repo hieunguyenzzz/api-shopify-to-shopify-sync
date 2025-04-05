@@ -4,7 +4,7 @@ dotenv.config();
 
 export const createShopifyGraphQLClient = (
 ): GraphQLClient => {
-  let apiVersion = '2025-01';
+  let apiVersion = '2025-04';
   let shopUrl = process.env.SHOPIFY_APP_URL || '';
   let shopifyToken = process.env.SHOPIFY_TOKEN || '';
   return new GraphQLClient(
