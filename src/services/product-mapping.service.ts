@@ -107,6 +107,19 @@ class ProductMappingService {
     }
   }
 
+  public async getMappingByHandle(productHandle: string): Promise<ProductMappingDocument | null> {
+    if (!this.initialized || !this.productMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.productMappingCollection!.findOne({ productHandle });
+    } catch (error) {
+      console.error(`Error getting product mapping for handle ${productHandle}:`, error);
+      return null;
+    }
+  }
+
   public async close(): Promise<void> {
     if (this.client) {
       await this.client.close();
