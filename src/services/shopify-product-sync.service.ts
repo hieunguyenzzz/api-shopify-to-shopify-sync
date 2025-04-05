@@ -33,7 +33,8 @@ export class ShopifyProductSyncService {
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
-    this.externalProductsApiUrl = process.env.EXTERNAL_PRODUCTS_API_URL || 'https://shopify-store-data-resolver.hieunguyen.dev/api/products';
+    const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'https://shopify-store-data-resolver.hieunguyen.dev';
+    this.externalProductsApiUrl = `${externalApiBaseUrl}/api/products`;
   }
 
   // Fetch products from external API
