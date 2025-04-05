@@ -3,6 +3,7 @@ export interface ExternalProduct {
   handle?: string;
   title: string;
   description: string;
+  descriptionHtml: string;
   productType: string;
   vendor: string;
   tags: string[];

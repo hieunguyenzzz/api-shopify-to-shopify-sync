@@ -21,6 +21,7 @@ import {
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { variantIdMappingService } from './variant-id-mapping.service';
 import { productMappingService } from './product-mapping.service';
+import { metaobjectMappingService } from './metaobject-mapping.service';
 import mongoDBService from './mongodb.service';
 import { generateFileHash, getMimeTypeFromUrl } from '../utils/file-hash.util';
 
@@ -114,7 +115,7 @@ export class ShopifyProductSyncService {
     const productInput: ProductSetInput = {
       title: externalProduct.title,
       handle: externalProduct.handle,
-      descriptionHtml: externalProduct.description,
+      descriptionHtml: externalProduct.descriptionHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
       tags: externalProduct.tags,
@@ -230,6 +231,9 @@ export class ShopifyProductSyncService {
     this.addSprMetafields(productInput, externalProduct);
     this.addYoastSeoMetafields(productInput, externalProduct);
     this.addGlobalMetafields(productInput, externalProduct);
+    
+    // Add special metaobject reference metafields that require ID mapping
+    await this.addFaqMetaobjectReferences(productInput, externalProduct);
     
     // Add special product reference metafields that require ID mapping
     await this.addProductReferenceMetafields(productInput, externalProduct);
@@ -542,6 +546,82 @@ export class ShopifyProductSyncService {
       }
     } catch (error) {
       console.error('❌ Error processing upsell_products metafield:', error);
+    }
+  }
+
+  // Add FAQ metaobject reference metafields
+  private async addFaqMetaobjectReferences(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const faqMetafieldKey = 'faqs';
+    
+    // Find the faqs metafield
+    const faqMetafield = externalProduct.metafields?.find(
+      m => m.namespace === 'custom' && m.key === faqMetafieldKey
+    );
+
+    if (!faqMetafield) {
+      return;
+    }
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    try {
+      // Parse the metaobject IDs from the metafield value
+      const externalMetaobjectIds: string[] = JSON.parse(faqMetafield.value);
+      
+      // Map the external metaobject IDs to Shopify metaobject IDs
+      const shopifyMetaobjectIds: string[] = [];
+      
+      // Ensure metaobject mapping service is initialized
+      await metaobjectMappingService.initialize();
+      
+      // For each external metaobject ID, find the corresponding Shopify metaobject ID
+      for (const externalMetaobjectId of externalMetaobjectIds) {
+        // Extract the ID from the gid://shopify/Metaobject/1234567890 format
+        const numericId = externalMetaobjectId.match(/\/Metaobject\/(\d+)$/)?.[1];
+        
+        // Try to find the mapping using the extracted ID
+        let shopifyMetaobjectId = null;
+        
+        if (numericId) {
+          // Look up the mapping in MongoDB using metaobject ID
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(numericId);
+        }
+        
+        // If not found by numeric ID, try the full ID format
+        if (!shopifyMetaobjectId) {
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+        }
+        
+        // If still not found, try the ID without any formatting
+        if (!shopifyMetaobjectId) {
+          const plainId = externalMetaobjectId.replace(/^gid:\/\/shopify\/Metaobject\//, '');
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(plainId);
+        }
+        
+        if (shopifyMetaobjectId) {
+          shopifyMetaobjectIds.push(shopifyMetaobjectId);
+        } else {
+          console.warn(`⚠️ No mapping found for external metaobject ID: ${externalMetaobjectId}`);
+        }
+      }
+      
+      // Add the metafield with the mapped metaobject IDs if we found any
+      if (shopifyMetaobjectIds.length > 0) {
+        productInput.metafields.push({
+          namespace: 'custom',
+          key: faqMetafieldKey,
+          type: 'list.metaobject_reference',
+          value: JSON.stringify(shopifyMetaobjectIds)
+        });
+        
+        console.log(`✅ Mapped ${shopifyMetaobjectIds.length}/${externalMetaobjectIds.length} metaobjects for faqs metafield`);
+      } else {
+        console.warn(`⚠️ No metaobject mappings found for faqs metafield`);
+      }
+    } catch (error) {
+      console.error('❌ Error processing faqs metafield:', error);
     }
   }
 
