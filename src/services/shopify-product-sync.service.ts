@@ -146,8 +146,7 @@ export class ShopifyProductSyncService {
   }
 
   // Prepare variants data
-  private async prepareVariants(variants: any[], productHandle: string): Promise<ProductVariantSetInput[]> {
-    console.log(`📦 Preparing ${variants.length} variants`);
+  private async prepareVariants(variants: any[], productHandle: string): Promise<ProductVariantSetInput[]> {    
     
     return Promise.all(variants.map(async (variant) => {
       return this.prepareVariantData(variant, productHandle);
@@ -198,7 +197,7 @@ export class ShopifyProductSyncService {
           value: JSON.stringify(mediaIds)
         });
 
-        console.log(`📸 Uploaded ${mediaIds.length} images for variant ${variant.sku} global.images metafield`);
+        //console.log(`📸 Uploaded ${mediaIds.length} images for variant ${variant.sku} global.images metafield`);
       } catch (error) {
         console.error(`❌ Error processing variant ${variant.sku} global.images metafield:`, error);
       }
@@ -271,7 +270,8 @@ export class ShopifyProductSyncService {
       
       // Get the synced product with variants to map IDs
       if (result.product?.id) {
-        await this.mapProductVariantIds(result.product.id, productData.input.handle || '');
+        const variantCount = productData.input.variants?.length || 0;
+        await this.mapProductVariantIds(result.product.id, productData.input.handle || '', variantCount);
       }
       
       return result.product;
@@ -282,8 +282,16 @@ export class ShopifyProductSyncService {
   }
 
   // Map product variant IDs between external and Shopify systems
-  private async mapProductVariantIds(shopifyProductId: string, productHandle: string): Promise<void> {
+  private async mapProductVariantIds(shopifyProductId: string, productHandle: string, variantCount: number): Promise<void> {
     try {
+      // Check if mappings already exist with the same count
+      const existingMappings = await variantIdMappingService.getMappingsByProduct(productHandle);
+      
+      if (existingMappings.length === variantCount && variantCount > 0) {
+        console.log(`✅ Variant mappings already exist for ${productHandle} with ${variantCount} variants. Skipping remapping.`);
+        return;
+      }
+      
       // Get full product data with variants from Shopify
       const response = await this.graphqlClient.request<{
         product: {
@@ -317,8 +325,6 @@ export class ShopifyProductSyncService {
         return;
       }
       
-      console.log(`🗺️ Mapping variant IDs for product: ${shopifyProduct.handle}`);
-      
       // Map variants by SKU
       for (const { node: shopifyVariant } of shopifyProduct.variants.edges) {
         const externalVariant = externalProduct.variants?.find(v => v.sku === shopifyVariant.sku);
@@ -330,7 +336,6 @@ export class ShopifyProductSyncService {
             productHandle,
             shopifyVariant.sku
           );
-          console.log(`✅ Mapped variant: ${shopifyVariant.sku} (${shopifyVariant.id})`);
         }
       }
     } catch (error) {
@@ -410,8 +415,7 @@ export class ShopifyProductSyncService {
       // Check if file is already cached in MongoDB
       const cachedFile = await mongoDBService.findFileByHash(fileHash);
       
-      if (cachedFile) {
-        console.log(`File cache hit for ${url} - using existing Shopify file ID: ${cachedFile.shopifyFileId}`);
+      if (cachedFile) {        
         return cachedFile.shopifyFileId;
       }
       
