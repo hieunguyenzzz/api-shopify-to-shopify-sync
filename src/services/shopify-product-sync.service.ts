@@ -20,6 +20,7 @@ import {
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { variantIdMappingService } from './variant-id-mapping.service';
+import { productMappingService } from './product-mapping.service';
 import mongoDBService from './mongodb.service';
 import { generateFileHash, getMimeTypeFromUrl } from '../utils/file-hash.util';
 
@@ -278,14 +279,49 @@ export class ShopifyProductSyncService {
       
       // Get the synced product with variants to map IDs
       if (result.product?.id) {
+        const productHandle = productData.input.handle || '';
+        const shopifyProductId = result.product.id;
+        
+        // Map variant IDs
         const variantCount = productData.input.variants?.length || 0;
-        await this.mapProductVariantIds(result.product.id, productData.input.handle || '', variantCount);
+        await this.mapProductVariantIds(shopifyProductId, productHandle, variantCount);
+        
+        // Create product mapping between external API and Shopify
+        await this.createProductMapping(shopifyProductId, productHandle);
       }
       
       return result.product;
     } catch (error) {
       console.error('❌ Error syncing product to Shopify:', error);
       throw error;
+    }
+  }
+
+  // Create product mapping between external API and Shopify
+  private async createProductMapping(shopifyProductId: string, productHandle: string): Promise<void> {
+    try {
+      // Initialize product mapping service
+      await productMappingService.initialize();
+      
+      // Get external product data to create the mapping
+      const externalProducts = await this.fetchExternalProducts();
+      const externalProduct = externalProducts.find(p => p.handle === productHandle);
+      
+      if (!externalProduct) {
+        console.warn(`⚠️ Could not find external product with handle ${productHandle}`);
+        return;
+      }
+      
+      // Create the product mapping
+      await productMappingService.saveProductMapping({
+        externalProductId: externalProduct.id,
+        shopifyProductId,
+        productHandle
+      });
+      
+      console.log(`✅ Created product mapping for handle ${productHandle}`);
+    } catch (error) {
+      console.error('❌ Error creating product mapping:', error);
     }
   }
 
@@ -376,8 +412,9 @@ export class ShopifyProductSyncService {
     const startTime = Date.now();
 
     try {
-      // Initialize the variant ID mapper
+      // Initialize services
       await variantIdMappingService.initialize();
+      await productMappingService.initialize();
       
       // Fetch external products
       const externalProducts = await this.fetchExternalProducts();
