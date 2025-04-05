@@ -137,4 +137,68 @@ export const PAGES_QUERY = `
   }
 `;
 
+export const METAOBJECTS_BY_TYPE_QUERY = `
+  query getMetaobjectsByType($type: String!, $first: Int) {
+    metaobjects(type: $type, first: $first) {
+      edges {
+        node {
+          id
+          handle
+          type
+          displayName
+          fields {
+            key
+            value
+          }
+          updatedAt
+        }
+      }
+    }
+  }
+`;
+
+export const METAOBJECT_CREATE_MUTATION = `
+  mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
+    metaobjectCreate(metaobject: $metaobject) {
+      metaobject {
+        id
+        handle
+        type
+        displayName
+        fields {
+          key
+          value
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+export const METAOBJECT_UPDATE_MUTATION = `
+  mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+    metaobjectUpdate(id: $id, metaobject: $metaobject) {
+      metaobject {
+        id
+        handle
+        type
+        displayName
+        fields {
+          key
+          value
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 

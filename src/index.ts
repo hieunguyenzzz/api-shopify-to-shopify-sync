@@ -1,9 +1,11 @@
 import express from 'express';
 import syncProducts from './api/sync-products';
 import syncPages from './api/sync-pages';
+import syncMetaobjectFaq from './api/sync-metaobject-faq';
 import mongoDBService from './services/mongodb.service';
 import { variantIdMappingService } from './services/variant-id-mapping.service';
 import { pageMappingService } from './services/page-mapping.service';
+import { metaobjectMappingService } from './services/metaobject-mapping.service';
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -26,6 +28,10 @@ const PORT = process.env.PORT || 3000;
     // Initialize page mapping service
     await pageMappingService.initialize();
     console.log('Page mapping MongoDB connection initialized successfully');
+
+    // Initialize metaobject mapping service
+    await metaobjectMappingService.initialize();
+    console.log('Metaobject mapping MongoDB connection initialized successfully');
   } catch (error) {
     console.error('Failed to initialize MongoDB connections:', error);
     // Continue application startup even if MongoDB fails
@@ -39,6 +45,7 @@ app.use(express.json());
 // Routes
 app.get('/api/sync-products', syncProducts);
 app.get('/api/sync-pages', syncPages);
+app.get('/api/sync-metaobject-faq', syncMetaobjectFaq);
 
 // Start server
 app.listen(PORT, () => {
@@ -57,6 +64,9 @@ process.on('SIGINT', async () => {
     
     await pageMappingService.close();
     console.log('Page mapping MongoDB connection closed');
+
+    await metaobjectMappingService.close();
+    console.log('Metaobject mapping MongoDB connection closed');
   } catch (error) {
     console.error('Error closing MongoDB connections:', error);
   }
