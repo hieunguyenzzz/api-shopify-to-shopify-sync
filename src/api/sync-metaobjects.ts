@@ -7,7 +7,7 @@ export const syncMetaobjects = async (req: Request, res: Response) => {
     const type = req.query.type as string || 'FAQs';
     
     // Validate metaobject type
-    const validTypes = ['FAQs', 'room_features', 'company_logo'];
+    const validTypes = ['FAQs', 'room_features', 'company_logo', 'product_feature'];
     if (!validTypes.includes(type)) {
       return res.status(400).json({
         message: `Invalid metaobject type. Supported types: ${validTypes.join(', ')}`

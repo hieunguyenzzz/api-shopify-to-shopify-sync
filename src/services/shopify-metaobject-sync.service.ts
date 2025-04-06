@@ -9,6 +9,7 @@ import {
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { metaobjectMappingService } from './metaobject-mapping.service';
+import MongoDBService from './mongodb.service';
 
 // Load environment variables
 dotenv.config();
@@ -55,6 +56,14 @@ interface MetaobjectUpdateResponse {
       message: string;
       code: string;
     }>;
+  }
+}
+
+// Define a custom error for missing mappings
+class MappingNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MappingNotFoundError';
   }
 }
 
@@ -128,16 +137,96 @@ export class ShopifyMetaobjectSyncService {
       externalMetaobject.type
     );
     
-    // Process fields for MetaobjectFieldInput - only include key and value, not type
-    const processedFields = externalMetaobject.fields.map(field => {
+    // Process fields asynchronously
+    const processedFieldsPromises = externalMetaobject.fields.map(async (field) => {
+      let processedValue = field.value;
+
+      // Handle string replacement first (applies to all string-based values potentially)
+      if (typeof processedValue === 'string') {
+        processedValue = processedValue.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      }
+
+      // Handle file_reference type
+      if (field.type === 'file_reference') {
+        try {
+          // Attempt to parse even if replacement happened, as the core structure might be JSON
+          const fileData = JSON.parse(processedValue);
+          const externalFileId = fileData.id;
+
+          if (externalFileId && typeof externalFileId === 'string') {
+            console.log(`🔍 [File Ref] Looking up mapping for external ID: ${externalFileId}`);
+            const mapping = await MongoDBService.findFileByExternalId(externalFileId);
+
+            if (mapping && mapping.shopifyFileId) {
+              console.log(`✅ [File Ref] Found Shopify ID: ${mapping.shopifyFileId}`);
+              // Directly assign the Shopify ID string to processedValue
+              processedValue = mapping.shopifyFileId; 
+            } else {
+              // Throw error instead of warning if mapping is not found
+              throw new MappingNotFoundError(`Could not find Shopify mapping for external file ID: ${externalFileId}`);
+            }
+          }
+        } catch (parseError) {
+          // If parsing fails, it might just be a plain string. Log error only if it looks like JSON.
+          if (processedValue.trim().startsWith('{') && processedValue.trim().endsWith('}')) {
+             console.error(`❌ [File Ref] Error parsing value for field ${field.key}:`, parseError);
+          }
+          // If it wasn't a MappingNotFoundError, rethrow or handle differently if needed
+          if (!(parseError instanceof MappingNotFoundError)) {
+             // Decide if a parse error should also cause a skip, for now, we keep the potentially string-replaced value
+            console.warn(`⚠️ [File Ref] Failed to parse potentially JSON value for ${field.key}. Using potentially modified string value.`);
+          } else {
+            // Rethrow the MappingNotFoundError to be caught later
+            throw parseError;
+          }
+        }
+      }
+      // Handle list.metaobject_reference type
+      else if (field.type === 'list.metaobject_reference') {
+        try {
+          const externalIds: string[] = JSON.parse(processedValue);
+          
+          if (Array.isArray(externalIds)) {
+            console.log(`🔍 [Metaobject List] Processing ${externalIds.length} external IDs for field ${field.key}`);
+            
+            const shopifyIdsPromises = externalIds.map(async (externalId) => {
+              if (typeof externalId !== 'string') {
+                 console.warn(`⚠️ [Metaobject List] Skipping non-string ID in list: ${externalId}`);
+                 return externalId; // Keep non-string items as is? Or filter?
+              }
+              const shopifyId = await metaobjectMappingService.getShopifyMetaobjectId(externalId);
+              if (shopifyId) {
+                 console.log(`✅ [Metaobject List] Mapped ${externalId} to ${shopifyId}`);
+                return shopifyId;
+              } else {
+                console.warn(`⚠️ [Metaobject List] Could not find Shopify mapping for external ID: ${externalId}. Keeping original.`);
+                return externalId; // Keep original ID if mapping not found
+              }
+            });
+            
+            const resolvedShopifyIds = await Promise.all(shopifyIdsPromises);
+            processedValue = JSON.stringify(resolvedShopifyIds);
+            console.log(`✅ [Metaobject List] Processed field ${field.key}. New value: ${processedValue}`);
+          }
+        } catch (parseError) {
+           console.error(`❌ [Metaobject List] Error parsing value for field ${field.key}:`, parseError);
+          // Keep the potentially string-replaced value if parsing fails
+        }
+      }
+
+      // Ensure the final value is not null or undefined, default to empty string
+      const finalValue = processedValue === null || typeof processedValue === 'undefined' ? "" : processedValue;
+
       return {
         key: field.key,
-        value: field.value.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design")
+        value: finalValue // Use finalValue here
       };
     });
     
+    // Wait for all field processing promises to resolve
+    const processedFields = await Promise.all(processedFieldsPromises);
+
     const metaobjectInput = {
-      
       handle: externalMetaobject.handle,
       fields: processedFields
     };
@@ -216,7 +305,7 @@ export class ShopifyMetaobjectSyncService {
   }
 
   // Sync a single metaobject
-  async syncMetaobject(externalMetaobject: ExternalMetaobject): Promise<ShopifyMetaobject> {
+  async syncMetaobject(externalMetaobject: ExternalMetaobject): Promise<ShopifyMetaobject | null> {
     try {
       // Prepare metaobject data
       const metaobjectData = await this.prepareMetaobjectData(externalMetaobject);
@@ -229,23 +318,47 @@ export class ShopifyMetaobjectSyncService {
         const shopifyId = metaobjectData.id || existingMapping?.shopifyMetaobjectId;
         
         if (!shopifyId) {
-          throw new Error(`Cannot update metaobject: missing Shopify ID for ${externalMetaobject.handle}`);
+          // This case might indicate an issue if prepareMetaobjectData didn't find an ID but a mapping exists?
+          // Or if the mapping exists but doesn't have the shopifyId - though prepareMetaobjectData should handle mapping lookup.
+          console.warn(`⚠️ Potential inconsistency for ${externalMetaobject.handle}. Mapping exists but update ID not determined directly. Using mapping ID.`);
+          if (!existingMapping?.shopifyMetaobjectId) {
+             throw new Error(`Cannot update metaobject: missing Shopify ID for ${externalMetaobject.handle} despite existing mapping.`);
+          }
+          // Use the ID from the mapping if metaobjectData didn't provide one
+          const idToUse = metaobjectData.id || existingMapping.shopifyMetaobjectId;
+          
+          const result = await this.updateMetaobject({
+            id: idToUse,
+            input: metaobjectData.input
+          });
+          
+          // Ensure mapping exists
+          await this.ensureMetaobjectMapping(
+            externalMetaobject.id,
+            idToUse,
+            externalMetaobject.handle,
+            externalMetaobject.type
+          );
+          
+          return result;
+
+        } else {
+           // Normal update path where ID was found by prepareMetaobjectData or consistent mapping
+           const result = await this.updateMetaobject({
+            id: shopifyId,
+            input: metaobjectData.input
+          });
+          
+          // Ensure mapping exists
+          await this.ensureMetaobjectMapping(
+            externalMetaobject.id,
+            shopifyId,
+            externalMetaobject.handle,
+            externalMetaobject.type
+          );
+          
+          return result;
         }
-        
-        const result = await this.updateMetaobject({
-          id: shopifyId,
-          input: metaobjectData.input
-        });
-        
-        // Ensure mapping exists
-        await this.ensureMetaobjectMapping(
-          externalMetaobject.id,
-          shopifyId,
-          externalMetaobject.handle,
-          externalMetaobject.type
-        );
-        
-        return result;
       } else {
         // Create new metaobject
         return await this.createMetaobject({
@@ -254,6 +367,12 @@ export class ShopifyMetaobjectSyncService {
         });
       }
     } catch (error) {
+      // Catch the specific MappingNotFoundError to skip the item
+      if (error instanceof MappingNotFoundError) {
+        console.warn(`⏭️ Skipping metaobject ${externalMetaobject.handle}: ${error.message}`);
+        return null; // Indicate that sync was skipped
+      }
+      // Re-throw other errors
       console.error(`❌ Error syncing metaobject ${externalMetaobject.handle}:`, error);
       throw error;
     }
@@ -351,8 +470,10 @@ export class ShopifyMetaobjectSyncService {
       for (const metaobject of metaobjectsToSync) {
         try {
           const result = await this.syncMetaobject(metaobject);
-          results.push(result);
-          console.log(`✅ Synced metaobject: ${metaobject.handle}`);
+          if (result) {
+            results.push(result);
+            console.log(`✅ Synced metaobject: ${metaobject.handle}`);
+          }
         } catch (error) {
           console.error(`❌ Error syncing metaobject ${metaobject.handle}:`, error);
           // Continue with the next metaobject

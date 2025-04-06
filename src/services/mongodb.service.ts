@@ -48,7 +48,9 @@ class MongoDBService {
       
       // Create index on fileHash for faster lookups
       await this.fileMappingCollection.createIndex({ fileHash: 1 }, { unique: true });
-      
+      // Create index on externalFileId for faster lookups
+      await this.fileMappingCollection.createIndex({ externalFileId: 1 });
+
       this.initialized = true;
       console.log('MongoDB connection established successfully');
     } catch (error) {
@@ -76,6 +78,29 @@ class MongoDBService {
       return result;
     } catch (error) {
       console.error('Error finding file by hash:', error);
+      return null;
+    }
+  }
+
+  public async findFileByExternalId(externalFileId: string): Promise<FileMappingDocument | null> {
+    if (!this.initialized || !this.fileMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      const result = await this.fileMappingCollection!.findOne({ externalFileId });
+
+      if (result) {
+        // Update the lastUsed timestamp
+        await this.fileMappingCollection!.updateOne(
+          { externalFileId },
+          { $set: { lastUsed: new Date() } }
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error finding file by external ID:', error);
       return null;
     }
   }
