@@ -18,6 +18,7 @@ interface ShopifyFile {
   originalUploadSize: number;
   createdAt: string;
   updatedAt: string;
+  alt?: string;
   status: string;
   mimeType: string;
 }
@@ -129,12 +130,21 @@ class ShopifyFileSyncService {
 
       // Prepare input for the fileCreate mutation
       // Assuming file.mediaType is compatible with Shopify's FileContentType enum (e.g., 'IMAGE', 'VIDEO')
-      const fileInput = {
+      const fileInput: {
+        originalSource: string;
+        filename: string;
+        contentType: string;
+        alt?: string;
+      } = {
         originalSource: file.url,
         filename: file.filename,
         contentType: file.mediaType, // Use mediaType from the external API response
-        // alt: file.filename // Optional: Add alt text if desired
       };
+
+      // Add alt text if it exists and is a non-empty string on the source file object
+      if (file.alt && typeof file.alt === 'string' && file.alt.trim() !== '') {
+        fileInput.alt = file.alt;
+      }
 
       try {
           const response = await this.graphqlClient.request<FileCreateResponse>(
