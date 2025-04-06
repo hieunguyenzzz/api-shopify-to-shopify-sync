@@ -131,15 +131,20 @@ export class ShopifyMetaobjectSyncService {
   async prepareMetaobjectData(externalMetaobject: ExternalMetaobject) {
     console.log(`🔧 Preparing metaobject data for sync: ${externalMetaobject.displayName}`);
     
-    // Check if metaobject already exists
+    // Determine the target Shopify type
+    const shopifyType = externalMetaobject.type === 'meeting_rooms_features' 
+      ? 'product_rooms_features' 
+      : externalMetaobject.type;
+    
+    // Check if metaobject already exists using the target Shopify type
     const existingMetaobject = await this.checkMetaobjectByHandle(
       externalMetaobject.handle, 
-      externalMetaobject.type
+      shopifyType // Use shopifyType here
     );
     
     // Process fields asynchronously
     const processedFieldsPromises = externalMetaobject.fields.map(async (field) => {
-      let processedValue = field.value;
+      let processedValue = field.value === null ? "" : field.value;
 
       // Handle string replacement first (applies to all string-based values potentially)
       if (typeof processedValue === 'string') {
@@ -165,6 +170,11 @@ export class ShopifyMetaobjectSyncService {
               // Throw error instead of warning if mapping is not found
               throw new MappingNotFoundError(`Could not find Shopify mapping for external file ID: ${externalFileId}`);
             }
+          } else {
+             // Handle cases where parsing succeeded but externalFileId is invalid or missing (e.g., field.value was "{}")
+             // Set processedValue to empty string in this scenario.
+             console.log(`ℹ️ [File Ref] Parsed JSON but found no valid external file ID for field ${field.key}. Setting value to empty string.`);
+             processedValue = ""; 
           }
         } catch (parseError) {
           // If parsing fails, it might just be a plain string. Log error only if it looks like JSON.
@@ -239,7 +249,8 @@ export class ShopifyMetaobjectSyncService {
       };
     }
     // when creating a new metaobject, we need to include the type
-    return { input: {...metaobjectInput, type: externalMetaobject.type} };
+    // Use the shopifyType when setting the type for creation
+    return { input: {...metaobjectInput, type: shopifyType} };
   }
 
   // Create a new metaobject
