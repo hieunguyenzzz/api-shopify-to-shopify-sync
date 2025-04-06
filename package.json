@@ -1,7 +1,7 @@
 {
   "scripts": {
     "generate:shopify-types": "graphql-codegen --config scripts/generate-shopify-types.js",
-    "prepare": "npm run generate:shopify-types",
+    "build": "tsc",
     "start": "ts-node src/index.ts",
     "dev": "ts-node src/index.ts",
     "variant-mappings": "ts-node src/scripts/check-variant-mappings.ts"
