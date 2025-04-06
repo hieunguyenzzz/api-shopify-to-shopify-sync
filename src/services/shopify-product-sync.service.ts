@@ -911,7 +911,7 @@ export class ShopifyProductSyncService {
       
       // Cache the file information in MongoDB if upload was successful
       if (fileId) {
-        await mongoDBService.saveFileMapping(fileHash, fileId, url, contentType);
+        await mongoDBService.saveFileMapping(fileHash, fileId, '', url, contentType);
         console.log(`Cached new file with hash ${fileHash} and Shopify ID ${fileId}`);
       }
 

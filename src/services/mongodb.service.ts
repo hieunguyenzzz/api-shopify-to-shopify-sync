@@ -6,6 +6,7 @@ dotenv.config();
 interface FileMappingDocument {
   fileHash: string;
   shopifyFileId: string;
+  externalFileId: string;
   url: string;
   mimeType: string;
   createdAt: Date;
@@ -82,6 +83,7 @@ class MongoDBService {
   public async saveFileMapping(
     fileHash: string,
     shopifyFileId: string,
+    externalFileId: string,
     url: string,
     mimeType: string
   ): Promise<boolean> {
@@ -97,9 +99,12 @@ class MongoDBService {
         {
           $set: {
             shopifyFileId,
+            externalFileId,
             url,
             mimeType,
-            lastUsed: now,
+            lastUsed: now
+          },
+          $setOnInsert: {
             createdAt: now
           }
         },

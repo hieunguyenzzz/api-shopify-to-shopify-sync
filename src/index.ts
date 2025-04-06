@@ -1,7 +1,8 @@
 import express from 'express';
 import syncProducts from './api/sync-products';
 import syncPages from './api/sync-pages';
-import syncMetaobjectFaq from './api/sync-metaobject-faq';
+import syncMetaobjects from './api/sync-metaobjects';
+import syncFiles from './api/sync-files';
 import mongoDBService from './services/mongodb.service';
 import { variantIdMappingService } from './services/variant-id-mapping.service';
 import { pageMappingService } from './services/page-mapping.service';
@@ -45,7 +46,14 @@ app.use(express.json());
 // Routes
 app.get('/api/sync-products', syncProducts);
 app.get('/api/sync-pages', syncPages);
-app.get('/api/sync-metaobject-faq', syncMetaobjectFaq);
+app.get('/api/sync-metaobjects', syncMetaobjects);
+app.get('/api/sync-files', syncFiles);
+
+// Backward compatibility route
+app.get('/api/sync-metaobject-faq', (req, res) => {
+  req.query.type = 'FAQs';
+  syncMetaobjects(req, res);
+});
 
 // Start server
 app.listen(PORT, () => {
