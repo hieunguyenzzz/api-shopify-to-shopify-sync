@@ -9,6 +9,15 @@ import {
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { pageMappingService } from './page-mapping.service';
+import { metaobjectMappingService } from './metaobject-mapping.service';
+
+// Custom error for missing mappings
+class MissingMetaobjectMappingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingMetaobjectMappingError';
+  }
+}
 
 // Load environment variables
 dotenv.config();
@@ -125,39 +134,74 @@ export class ShopifyPageSyncService {
 
   // Prepare page data for create/update
   async preparePageData(externalPage: ExternalPage) {
-    console.log(`🔧 Preparing page data for sync: ${externalPage.title}`);
-    
-    // Check if page already exists
-    const existingPage = await this.checkPageByHandle(externalPage.handle);
-    
-    // Replace "Soundbox Store" with "Quell Design" in content
-    const processedBodyHtml = externalPage.bodyHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
-    
-    const pageInput = {
-      title: externalPage.title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
-      handle: externalPage.handle,
-      body: processedBodyHtml,
-      isPublished: true,
-      templateSuffix: externalPage.templateSuffix,
-      metafields: externalPage.metafields?.map(metafield => ({
-        namespace: metafield.namespace,
-        key: metafield.key,
-        value: metafield.value.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
-        type: metafield.type,
-      })),
-    };
+    try {
+      console.log(`🔧 Preparing page data for sync: ${externalPage.title}`);
+      
+      const existingPage = await this.checkPageByHandle(externalPage.handle);
+      const processedBodyHtml = externalPage.bodyHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      
+      const processedMetafields = externalPage.metafields 
+        ? await Promise.all(externalPage.metafields.map(async (metafield) => {
+            if (metafield.type === 'metaobject_reference') {
+              await metaobjectMappingService.initialize();
+              const externalMetaobjectId = metafield.value;
+              const shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+              
+              if (shopifyMetaobjectId) {
+                return {
+                  namespace: metafield.namespace,
+                  key: metafield.key,
+                  value: shopifyMetaobjectId,
+                  type: metafield.type,
+                };
+              } else {
+                // Throw specific error if mapping is missing
+                throw new MissingMetaobjectMappingError(`Could not find Shopify metaobject ID for external ID: ${externalMetaobjectId} on page ${externalPage.handle}.`);
+              }
+            } else {
+              return {
+                namespace: metafield.namespace,
+                key: metafield.key,
+                value: metafield.value.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
+                type: metafield.type,
+              };
+            }
+          })) 
+        : [];
 
-    if (existingPage) {
-      // For update, we need the ID
-      return {
-        input: {
-          id: existingPage.id,
-          ...pageInput
-        }
+      // No need to filter nulls anymore as we throw an error
+      const finalMetafields = processedMetafields;
+
+      const pageInput = {
+        title: externalPage.title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
+        handle: externalPage.handle,
+        body: processedBodyHtml,
+        isPublished: true,
+        templateSuffix: externalPage.templateSuffix,
+        metafields: finalMetafields,
       };
-    }
 
-    return { input: pageInput };
+      if (existingPage) {
+        // For update, we need the ID
+        return {
+          input: {
+            id: existingPage.id,
+            ...pageInput
+          }
+        };
+      }
+
+      return { input: pageInput };
+    } catch (error) {
+      if (error instanceof MissingMetaobjectMappingError) {
+        console.warn(`⚠️ Skipping page ${externalPage.handle}: ${error.message}`);
+        return null; // Signal preparation failure
+      } else {
+        // Re-throw other unexpected errors
+        console.error(`❌ Unexpected error preparing page data for ${externalPage.handle}:`, error);
+        throw error;
+      }
+    }
   }
 
   // Create a new page
@@ -221,11 +265,18 @@ export class ShopifyPageSyncService {
   }
 
   // Create or update a page based on whether it exists
-  async syncPage(externalPage: ExternalPage): Promise<ShopifyPage> {
+  async syncPage(externalPage: ExternalPage): Promise<ShopifyPage | null> {
     try {
       console.log(`🔄 Syncing page: ${externalPage.title}`);
       
       const pageData = await this.preparePageData(externalPage);
+      
+      // If preparePageData returned null, skip this page
+      if (!pageData) {
+        console.log(`⏭️ Skipping sync for page ${externalPage.handle} due to missing metaobject mapping.`);
+        return null; 
+      }
+
       const existingPage = await this.checkPageByHandle(externalPage.handle);
       
       let result: ShopifyPage;
@@ -326,12 +377,23 @@ export class ShopifyPageSyncService {
       for (const page of pagesToSync) {
         try {
           const result = await this.syncPage(page);
-          results.push({
-            title: page.title,
-            handle: page.handle,
-            status: 'success',
-            shopifyId: result.id
-          });
+          
+          // Check if sync was skipped
+          if (result === null) {
+            results.push({
+              title: page.title,
+              handle: page.handle,
+              status: 'skipped',
+              reason: 'Missing metaobject mapping'
+            });
+          } else {
+            results.push({
+              title: page.title,
+              handle: page.handle,
+              status: 'success',
+              shopifyId: result.id
+            });
+          }
         } catch (error) {
           console.error(`❌ Error syncing page ${page.title}:`, error);
           results.push({
@@ -343,7 +405,7 @@ export class ShopifyPageSyncService {
         }
       }
       
-      console.log(`✅ Page sync completed. Success: ${results.filter(r => r.status === 'success').length}, Failed: ${results.filter(r => r.status === 'error').length}`);
+      console.log(`✅ Page sync completed. Success: ${results.filter(r => r.status === 'success').length}, Failed: ${results.filter(r => r.status === 'error').length}, Skipped: ${results.filter(r => r.status === 'skipped').length}`);
       
       return results;
     } catch (error) {

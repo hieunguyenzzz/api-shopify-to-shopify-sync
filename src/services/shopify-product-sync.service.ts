@@ -227,7 +227,7 @@ export class ShopifyProductSyncService {
     this.addCustomTextMetafields(productInput, externalProduct);
     this.addRichTextMetafields(productInput, externalProduct);
     //this.addCustomNumberMetafields(productInput, externalProduct);
-    //this.addCustomFileReferenceMetafields(productInput, externalProduct);
+    await this.addCustomFileReferenceMetafields(productInput, externalProduct);
     this.addJudgemeMetafields(productInput, externalProduct);
     this.addSprMetafields(productInput, externalProduct);
     this.addYoastSeoMetafields(productInput, externalProduct);
@@ -235,7 +235,10 @@ export class ShopifyProductSyncService {
     
     // Add special metaobject reference metafields that require ID mapping
     await this.addFaqMetaobjectReferences(productInput, externalProduct);
-    
+    await this.addFeatureContentMetaobjectReferences(productInput, externalProduct);
+    await this.addProductRoomsFeaturesMetaobjectReference(productInput, externalProduct);
+    await this.addCompanyLogoMetaobjectReferences(productInput, externalProduct);
+
     // Add special product reference metafields that require ID mapping
     await this.addProductReferenceMetafields(productInput, externalProduct);
   }
@@ -350,7 +353,7 @@ export class ShopifyProductSyncService {
   }
 
   // Add custom file reference metafields
-  private addCustomFileReferenceMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+  private async addCustomFileReferenceMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const fileMetafields = [
       { namespace: 'custom', key: 'menu_image', type: 'file_reference' }
     ];
@@ -364,13 +367,29 @@ export class ShopifyProductSyncService {
         m => m.namespace === metafield.namespace && m.key === metafield.key
       );
 
-      if (metafieldData) {
-        productInput.metafields.push({
-          namespace: metafield.namespace,
-          key: metafield.key,
-          type: metafield.type,
-          value: metafieldData.value
-        });
+      // Check if metafieldData exists and has an originalValue (externalFileId)
+      if (metafieldData && metafieldData.originalValue) {
+        // Look up the mapping in MongoDB using the externalFileId
+        const mapping = await mongoDBService.findFileByExternalId(metafieldData.originalValue);
+
+        if (mapping && mapping.shopifyFileId) {
+          // Use the shopifyFileId from the mapping as the value
+          productInput.metafields.push({
+            namespace: metafield.namespace,
+            key: metafield.key,
+            type: metafield.type,
+            value: mapping.shopifyFileId // Use the mapped Shopify File ID
+          });
+          console.log(`✅ Mapped file reference for ${metafield.namespace}.${metafield.key}: ${mapping.shopifyFileId}`);
+        } else {
+          // Log a warning if no mapping is found
+          console.warn(`⚠️ No file mapping found for externalFileId: ${metafieldData.originalValue} (namespace: ${metafield.namespace}, key: ${metafield.key})`);
+          // Optionally: Fallback or error handling logic here
+          // For now, we just skip adding this metafield if mapping is missing
+        }
+      } else if (metafieldData) {
+          // Log if originalValue is missing
+          console.warn(`⚠️ Missing originalValue for file reference metafield: ${metafield.namespace}.${metafield.key}`);
       }
     }
   }
@@ -661,6 +680,213 @@ export class ShopifyProductSyncService {
       }
     } catch (error) {
       console.error('❌ Error processing faqs metafield:', error);
+    }
+  }
+
+  // Add feature content metaobject reference metafields
+  private async addFeatureContentMetaobjectReferences(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const featureContentMetafieldKey = 'feature_content';
+    
+    // Find the feature_content metafield
+    const featureContentMetafield = externalProduct.metafields?.find(
+      m => m.namespace === 'custom' && m.key === featureContentMetafieldKey
+    );
+
+    if (!featureContentMetafield) {
+      return;
+    }
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    try {
+      // Parse the metaobject IDs from the metafield value
+      const externalMetaobjectIds: string[] = JSON.parse(featureContentMetafield.value);
+      
+      // Map the external metaobject IDs to Shopify metaobject IDs
+      const shopifyMetaobjectIds: string[] = [];
+      
+      // Ensure metaobject mapping service is initialized
+      await metaobjectMappingService.initialize();
+      
+      // For each external metaobject ID, find the corresponding Shopify metaobject ID
+      for (const externalMetaobjectId of externalMetaobjectIds) {
+        // Extract the ID from the gid://shopify/Metaobject/1234567890 format
+        const numericId = externalMetaobjectId.match(/\/Metaobject\/(\d+)$/)?.[1];
+        
+        // Try to find the mapping using the extracted ID
+        let shopifyMetaobjectId = null;
+        
+        if (numericId) {
+          // Look up the mapping in MongoDB using metaobject ID
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(numericId);
+        }
+        
+        // If not found by numeric ID, try the full ID format
+        if (!shopifyMetaobjectId) {
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+        }
+        
+        // If still not found, try the ID without any formatting
+        if (!shopifyMetaobjectId) {
+          const plainId = externalMetaobjectId.replace(/^gid:\/\/shopify\/Metaobject\//, '');
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(plainId);
+        }
+        
+        if (shopifyMetaobjectId) {
+          shopifyMetaobjectIds.push(shopifyMetaobjectId);
+        } else {
+          console.warn(`⚠️ No mapping found for external metaobject ID (feature_content): ${externalMetaobjectId}`);
+        }
+      }
+      
+      // Add the metafield with the mapped metaobject IDs if we found any
+      if (shopifyMetaobjectIds.length > 0) {
+        productInput.metafields.push({
+          namespace: 'custom',
+          key: featureContentMetafieldKey,
+          type: 'list.metaobject_reference',
+          value: JSON.stringify(shopifyMetaobjectIds)
+        });
+        
+        console.log(`✅ Mapped ${shopifyMetaobjectIds.length}/${externalMetaobjectIds.length} metaobjects for ${featureContentMetafieldKey} metafield`);
+      } else {
+        console.warn(`⚠️ No metaobject mappings found for ${featureContentMetafieldKey} metafield`);
+      }
+    } catch (error) {
+      console.error(`❌ Error processing ${featureContentMetafieldKey} metafield:`, error);
+    }
+  }
+
+  // Add product rooms features metaobject reference metafield
+  private async addProductRoomsFeaturesMetaobjectReference(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const metafieldKey = 'product_rooms_features';
+    const namespace = 'custom';
+    
+    // Find the metafield
+    const metafieldData = externalProduct.metafields?.find(
+      m => m.namespace === namespace && m.key === metafieldKey
+    );
+
+    if (!metafieldData || !metafieldData.value) {
+      return; // Metafield not found or has no value
+    }
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    try {
+      const externalMetaobjectId = metafieldData.value;
+      
+      // Ensure metaobject mapping service is initialized
+      await metaobjectMappingService.initialize();
+      
+      // Map the external metaobject ID to Shopify metaobject ID
+      let shopifyMetaobjectId: string | null = null;
+      
+      // Extract the ID from the gid://shopify/Metaobject/1234567890 format
+      const numericId = externalMetaobjectId.match(/\/Metaobject\/(\d+)$/)?.[1];
+      
+      if (numericId) {
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(numericId);
+      }
+      
+      if (!shopifyMetaobjectId) {
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+      }
+      
+      if (!shopifyMetaobjectId) {
+        const plainId = externalMetaobjectId.replace(/^gid:\/\/shopify\/Metaobject\//, '');
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(plainId);
+      }
+        
+      if (shopifyMetaobjectId) {
+        productInput.metafields.push({
+          namespace: namespace,
+          key: metafieldKey,
+          type: 'metaobject_reference', // Single reference type
+          value: shopifyMetaobjectId
+        });
+        console.log(`✅ Mapped metaobject reference for ${namespace}.${metafieldKey}: ${shopifyMetaobjectId}`);
+      } else {
+        console.warn(`⚠️ No mapping found for external metaobject ID (${namespace}.${metafieldKey}): ${externalMetaobjectId}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error processing ${namespace}.${metafieldKey} metafield:`, error);
+    }
+  }
+
+  // Add company logo metaobject reference metafields
+  private async addCompanyLogoMetaobjectReferences(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const metafieldKey = 'company_logo';
+    const namespace = 'custom';
+    
+    // Find the metafield
+    const metafieldData = externalProduct.metafields?.find(
+      m => m.namespace === namespace && m.key === metafieldKey
+    );
+
+    if (!metafieldData || !metafieldData.value) {
+      return; // Metafield not found or has no value
+    }
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    try {
+      // Parse the metaobject IDs from the metafield value
+      const externalMetaobjectIds: string[] = JSON.parse(metafieldData.value);
+      
+      // Map the external metaobject IDs to Shopify metaobject IDs
+      const shopifyMetaobjectIds: string[] = [];
+      
+      // Ensure metaobject mapping service is initialized
+      await metaobjectMappingService.initialize();
+      
+      // For each external metaobject ID, find the corresponding Shopify metaobject ID
+      for (const externalMetaobjectId of externalMetaobjectIds) {
+        let shopifyMetaobjectId: string | null = null;
+        const numericId = externalMetaobjectId.match(/\/Metaobject\/(\d+)$/)?.[1];
+        
+        if (numericId) {
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(numericId);
+        }
+        
+        if (!shopifyMetaobjectId) {
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+        }
+        
+        if (!shopifyMetaobjectId) {
+          const plainId = externalMetaobjectId.replace(/^gid:\/\/shopify\/Metaobject\//, '');
+          shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(plainId);
+        }
+        
+        if (shopifyMetaobjectId) {
+          shopifyMetaobjectIds.push(shopifyMetaobjectId);
+        } else {
+          console.warn(`⚠️ No mapping found for external metaobject ID (${namespace}.${metafieldKey}): ${externalMetaobjectId}`);
+        }
+      }
+      
+      // Add the metafield with the mapped metaobject IDs if we found any
+      if (shopifyMetaobjectIds.length > 0) {
+        productInput.metafields.push({
+          namespace: namespace,
+          key: metafieldKey,
+          type: 'list.metaobject_reference',
+          value: JSON.stringify(shopifyMetaobjectIds)
+        });
+        
+        console.log(`✅ Mapped ${shopifyMetaobjectIds.length}/${externalMetaobjectIds.length} metaobjects for ${namespace}.${metafieldKey} metafield`);
+      } else {
+        console.warn(`⚠️ No metaobject mappings found for ${namespace}.${metafieldKey} metafield`);
+      }
+    } catch (error) {
+      console.error(`❌ Error processing ${namespace}.${metafieldKey} metafield:`, error);
     }
   }
 
