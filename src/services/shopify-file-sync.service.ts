@@ -116,6 +116,14 @@ class ShopifyFileSyncService {
         return true;
       }
       
+      // Check if the mediaType is 'OTHER' and skip if it is
+      if (file.mediaType === 'OTHER') {
+        console.log(`⏭️ Skipping file with mediaType 'OTHER': ${file.filename}`);
+        // We return true because skipping isn't an error, the sync process for this file just doesn't proceed.
+        // If you want skipped files to be counted differently, you might adjust the return value or add logging elsewhere.
+        return true;
+      }
+      
       // File doesn't exist in DB, create it in Shopify
       console.log(`🚀 File not found in DB. Creating file in Shopify: ${file.filename}`);
 
@@ -194,11 +202,13 @@ class ShopifyFileSyncService {
       for (const file of filesToSync) {
         const success = await this.syncFile(file);
         if (success) {
+          // Only add successfully synced files (including skipped ones, if 'true' is returned)
+          // Adjust logic here if skipped files shouldn't be in the final `syncedFiles` array
           syncedFiles.push(file);
         }
       }
       
-      console.log(`✅ Sync completed. Successfully synced ${syncedFiles.length} out of ${filesToSync.length} files.`);
+      console.log(`✅ Sync completed. Successfully processed ${syncedFiles.length} out of ${filesToSync.length} files.`);
       
       return syncedFiles;
     } catch (error) {
