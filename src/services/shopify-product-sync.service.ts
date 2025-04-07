@@ -122,8 +122,8 @@ export class ShopifyProductSyncService {
       status: externalProduct.status as ProductStatus,
       templateSuffix: externalProduct.templateSuffix,
       seo: {
-        title: externalProduct.seo.title,
-        description: externalProduct.seo.description,
+        title: externalProduct.seo?.title?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design") ?? '',
+        description: externalProduct.seo?.description?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design") ?? '',
       },
       productOptions: externalProduct.options?.map(option => ({
         name: option.name,
