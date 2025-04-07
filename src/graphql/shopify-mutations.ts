@@ -201,4 +201,45 @@ export const METAOBJECT_UPDATE_MUTATION = `
   }
 `;
 
+export const COLLECTION_CREATE_MUTATION = `
+  mutation collectionCreate($input: CollectionInput!) {
+    collectionCreate(input: $input) {
+      collection {
+        id
+        handle
+        title
+        descriptionHtml
+        sortOrder
+        templateSuffix
+        updatedAt
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const COLLECTION_UPDATE_MUTATION = `
+  mutation collectionUpdate($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
+      collection {
+        id
+        handle
+        title
+        descriptionHtml
+        sortOrder
+        templateSuffix
+        updatedAt
+        # products field might not be returned by default, check API version if needed
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 
