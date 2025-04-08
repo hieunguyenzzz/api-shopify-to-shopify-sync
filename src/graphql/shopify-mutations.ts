@@ -242,4 +242,59 @@ export const COLLECTION_UPDATE_MUTATION = `
   }
 `;
 
+export const COLLECTION_BY_HANDLE_QUERY = `
+  query collectionByHandle($handle: String!) {
+    collectionByHandle(handle: $handle) {
+      id
+      handle
+      title
+      updatedAt
+      descriptionHtml
+      sortOrder
+      templateSuffix
+      # Add products connection if needed later, e.g.:
+      # products(first: 10) {
+      #   nodes { id }
+      # }
+    }
+  }
+`;
+
+export const COLLECTION_ADD_PRODUCTS_MUTATION = `
+  mutation collectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection {
+        id
+        updatedAt
+        productsCount {
+          count
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const COLLECTION_PRODUCTS_QUERY = `
+  query collectionProducts($id: ID!, $first: Int!, $after: String) {
+    collection(id: $id) {
+      id
+      products(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        edges {
+          node {
+            id
+          }
+        }
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 
