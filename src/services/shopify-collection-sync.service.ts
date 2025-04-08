@@ -8,7 +8,8 @@ import {
   COLLECTION_BY_HANDLE_QUERY,
   COLLECTION_ADD_PRODUCTS_MUTATION,
   COLLECTION_PRODUCTS_QUERY,
-  COLLECTION_DELETE_MUTATION
+  COLLECTION_DELETE_MUTATION,
+  COLLECTION_PUBLISH_MUTATION
 } from '../graphql/shopify-mutations';
 import mongoDBCollectionService from './mongodb-collection.service';
 import crypto from 'crypto';
@@ -34,9 +35,22 @@ interface CollectionRule {
 interface CollectionRuleSet {
   appliedDisjunctively: boolean;
   rules: CollectionRule[];
+  templateSuffix: string;
+  image?: CollectionImage | null; // Add optional image field
+  products: {
+    nodes: ShopifyProduct[];
+    pageInfo: {
+      hasNextPage: boolean;
+    };
+  };
 }
-// --- End Added RuleSet interfaces ---
 
+// --- Added Image interface ---
+interface CollectionImage {
+  url?: string | null; // Assuming URL is the primary field
+  altText?: string | null;
+}
+// --- End Added Image interface ---
 
 interface ShopifyCollection {
   id: string; // This is the External ID in the context of fetchExternalCollections
@@ -47,6 +61,7 @@ interface ShopifyCollection {
   sortOrder: string; // Needs mapping to Shopify's enum `CollectionSortOrder`
   templateSuffix: string;
   ruleSet?: CollectionRuleSet; // Optional ruleSet field
+  image?: CollectionImage | null; // Add optional image field
   products: {
     nodes: ShopifyProduct[]; // Products from the external source
     pageInfo: {
@@ -148,6 +163,10 @@ interface ShopifyCollectionInput {
   sortOrder: string; // Ensure this matches Shopify's CollectionSortOrder enum
   templateSuffix: string;
   ruleSet?: CollectionRuleSetInput; // Add the ruleSet here
+  image?: { // Conforms to Shopify's ImageInput (adjust if needed)
+    src?: string | null;
+    altText?: string | null;
+  } | null;
 }
 // --- End Collection Input type ---
 
@@ -168,6 +187,22 @@ interface CollectionAddProductsResponse {
 
 interface ProductsCount {
   count: number;
+}
+
+// Add interface for publish collection response
+interface CollectionPublishResponse {
+  publishablePublish: {
+    publishable: {
+      publishedOnPublication: boolean;
+    } | null;
+    shop: {
+      id: string;
+    };
+    userErrors: Array<{
+      field: string;
+      message: string;
+    }>;
+  }
 }
 
 // Add interface for CollectionProducts query response
@@ -226,7 +261,10 @@ class ShopifyCollectionSyncService {
        ruleSetString = `${collection.ruleSet.appliedDisjunctively}|${rulesData}`;
     }
 
-    const collectionData = `${collection.title}|${collection.handle}|${collection.descriptionHtml}|${collection.sortOrder}|${collection.templateSuffix}|${ruleSetString}`;
+    // Add image data to hash
+    const imageData = collection.image ? `${collection.image.url || ''}|${collection.image.altText || ''}` : 'null';
+
+    const collectionData = `${collection.title}|${collection.handle}|${collection.descriptionHtml}|${collection.sortOrder}|${collection.templateSuffix}|${ruleSetString}|${imageData}`;
     return crypto.createHash('md5').update(collectionData).digest('hex');
   }
 
@@ -433,6 +471,35 @@ class ShopifyCollectionSyncService {
     }
   }
 
+  // Helper method to publish a collection to the current channel
+  private async publishCollection(shopifyCollectionId: string): Promise<boolean> {
+    try {
+      console.log(`📢 Publishing collection to current channel: ${shopifyCollectionId}`);
+      const response = await this.graphqlClient.request<CollectionPublishResponse>(
+        COLLECTION_PUBLISH_MUTATION,
+        { id: shopifyCollectionId }
+      );
+
+      if (response.publishablePublish.userErrors?.length > 0) {
+        console.error(`❌ Shopify API Error publishing collection ${shopifyCollectionId}:`, 
+                      response.publishablePublish.userErrors);
+        return false;
+      }
+
+      if (!response.publishablePublish.publishable) {
+        console.error(`❌ Shopify API returned null publishable after publishing collection ${shopifyCollectionId}`);
+        return false;
+      }
+
+      const publishedOnPublication = response.publishablePublish.publishable.publishedOnPublication;
+      console.log(`✅ Successfully published collection ${shopifyCollectionId} to current channel. Published on publication: ${publishedOnPublication}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Error publishing collection ${shopifyCollectionId}:`, error);
+      return false;
+    }
+  }
+
   // Sync a single collection
   async syncCollection(collection: ShopifyCollection): Promise<boolean> {
     try {
@@ -481,6 +548,18 @@ class ShopifyCollectionSyncService {
       }
       // --- End Add ruleSet ---
 
+      // --- Add image to input if present and has a URL ---
+      if (collection.image && collection.image.url) {
+        collectionBaseInput.image = {
+            src: collection.image.url, // Map url to src
+            altText: collection.image.altText // altText maps directly
+        };
+        console.log(`ℹ️ Including image in input for collection: ${collection.title} (URL: ${collection.image.url})`);
+      } else if (collection.image && !collection.image.url) {
+          console.warn(`⚠️ Collection "${collection.title}" has an image object but no URL. Skipping image setting.`);
+      }
+      // --- End Add image ---
+
 
       if (exists && existingMappedShopifyId) {
         // 2. Found in DB by Hash: Update Shopify collection
@@ -499,6 +578,9 @@ class ShopifyCollectionSyncService {
           }
 
           console.log(`✅ Successfully updated collection metadata/ruleset in Shopify: ${collection.title}`);
+
+          // Publish collection after update
+          await this.publishCollection(existingMappedShopifyId);
 
           // --- Skip product add if ruleSet exists --- 
           if (!collection.ruleSet) {
@@ -553,6 +635,9 @@ class ShopifyCollectionSyncService {
 
              const updatedCollection = updateResponse.collectionUpdate.collection;
              console.log(`✅ Successfully updated collection metadata/ruleset in Shopify (found by handle): ${updatedCollection.title} (ID: ${updatedCollection.id})`);
+
+             // Publish collection after update
+             await this.publishCollection(targetShopifyId);
 
              // --- Skip product add if ruleSet exists --- 
              if (!collection.ruleSet) {
@@ -614,6 +699,9 @@ class ShopifyCollectionSyncService {
 
             const newShopifyCollectionId = createdShopifyCollection.id;
             console.log(`✅ Successfully created collection in Shopify: ${collection.title} (ID: ${newShopifyCollectionId}).`);
+
+            // Publish newly created collection
+            await this.publishCollection(newShopifyCollectionId);
 
             // --- Skip product add if ruleSet exists --- 
              if (!collection.ruleSet) {

@@ -220,6 +220,10 @@ export const COLLECTION_CREATE_MUTATION = `
             condition
           }
         }
+        image {
+          url
+          altText
+        }
       }
       userErrors {
         field
@@ -248,7 +252,10 @@ export const COLLECTION_UPDATE_MUTATION = `
             condition
           }
         }
-        # products field might not be returned by default, check API version if needed
+        image {
+          url
+          altText
+        }
       }
       userErrors {
         field
@@ -318,6 +325,23 @@ export const COLLECTION_DELETE_MUTATION = `
   mutation collectionDelete($input: CollectionDeleteInput!) {
     collectionDelete(input: $input) {
       deletedCollectionId
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const COLLECTION_PUBLISH_MUTATION = `
+  mutation publishablePublish($id: ID!) {
+    publishablePublish(id: $id, input: [{publicationId: "gid://shopify/Publication/170777084248"}]) {
+      publishable {
+        publishedOnPublication(publicationId: "gid://shopify/Publication/170777084248")
+      }
+      shop {
+        id
+      }
       userErrors {
         field
         message
