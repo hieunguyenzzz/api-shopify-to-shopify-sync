@@ -212,6 +212,14 @@ export const COLLECTION_CREATE_MUTATION = `
         sortOrder
         templateSuffix
         updatedAt
+        ruleSet {
+          appliedDisjunctively
+          rules {
+            column
+            relation
+            condition
+          }
+        }
       }
       userErrors {
         field
@@ -232,6 +240,14 @@ export const COLLECTION_UPDATE_MUTATION = `
         sortOrder
         templateSuffix
         updatedAt
+        ruleSet {
+          appliedDisjunctively
+          rules {
+            column
+            relation
+            condition
+          }
+        }
         # products field might not be returned by default, check API version if needed
       }
       userErrors {

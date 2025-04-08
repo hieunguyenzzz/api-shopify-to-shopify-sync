@@ -23,16 +23,31 @@ interface ShopifyProduct {
   handle: string;
 }
 
+// --- Added RuleSet interfaces ---
+interface CollectionRule {
+  column: string; // e.g., "TAG", "TITLE", "PRODUCT_TYPE" etc. Needs mapping to Shopify's enum `CollectionRuleColumn`
+  relation: string; // e.g., "EQUALS", "NOT_CONTAINS". Needs mapping to Shopify's enum `CollectionRuleRelation`
+  condition: string;
+}
+
+interface CollectionRuleSet {
+  appliedDisjunctively: boolean;
+  rules: CollectionRule[];
+}
+// --- End Added RuleSet interfaces ---
+
+
 interface ShopifyCollection {
-  id: string;
+  id: string; // This is the External ID in the context of fetchExternalCollections
   handle: string;
   title: string;
   updatedAt: string;
   descriptionHtml: string;
-  sortOrder: string;
+  sortOrder: string; // Needs mapping to Shopify's enum `CollectionSortOrder`
   templateSuffix: string;
+  ruleSet?: CollectionRuleSet; // Optional ruleSet field
   products: {
-    nodes: ShopifyProduct[];
+    nodes: ShopifyProduct[]; // Products from the external source
     pageInfo: {
       hasNextPage: boolean;
     };
@@ -40,14 +55,28 @@ interface ShopifyCollection {
 }
 
 interface CollectionByHandleResponse {
-  collectionByHandle: ShopifyCollection | null;
+  collectionByHandle: ShopifyCollection | null; // Note: Shopify's response might differ slightly, adjust as needed
 }
 
 interface ExternalCollectionsResponse {
   success: boolean;
-  collections: ShopifyCollection[];
+  collections: ShopifyCollection[]; // These now include the optional ruleSet
   timestamp: string;
 }
+
+// --- Added RuleSet Input interfaces (assuming structure for Shopify mutation) ---
+interface CollectionRuleInput {
+  column: string; // Should map to Shopify's CollectionRuleColumn enum
+  relation: string; // Should map to Shopify's CollectionRuleRelation enum
+  condition: string;
+}
+
+interface CollectionRuleSetInput {
+  appliedDisjunctively: boolean;
+  rules: CollectionRuleInput[];
+}
+// --- End Added RuleSet Input interfaces ---
+
 
 interface CollectionCreateResponse {
   collectionCreate: {
@@ -58,6 +87,7 @@ interface CollectionCreateResponse {
       descriptionHtml: string;
       sortOrder: string;
       templateSuffix: string;
+      // ruleSet?: CollectionRuleSet; // Does Shopify return this on create? Check docs.
       updatedAt: string;
     };
     userErrors: Array<{
@@ -76,6 +106,7 @@ interface CollectionUpdateResponse {
       descriptionHtml: string;
       sortOrder: string;
       templateSuffix: string;
+      // ruleSet?: CollectionRuleSet; // Does Shopify return this on update? Check docs.
       updatedAt: string;
     };
     userErrors: Array<{
@@ -84,6 +115,41 @@ interface CollectionUpdateResponse {
     }>;
   }
 }
+
+// --- Define a type for the Collection Input (used in mutations) ---
+// NOTE: You MUST ensure your GraphQL mutations (`COLLECTION_CREATE_MUTATION`, `COLLECTION_UPDATE_MUTATION`)
+// are updated to accept a `$input: CollectionInput!` variable and include the `ruleSet` field within that input type.
+// Example CollectionInput definition in GraphQL schema (check Shopify docs for exact types):
+// input CollectionInput {
+//   id: ID # Required for update, absent for create
+//   handle: String
+//   title: String
+//   descriptionHtml: String
+//   sortOrder: CollectionSortOrder
+//   templateSuffix: String
+//   ruleSet: CollectionRuleSetInput
+//   # other fields...
+// }
+// input CollectionRuleSetInput {
+//   appliedDisjunctively: Boolean!
+//   rules: [CollectionRuleInput!]
+// }
+// input CollectionRuleInput {
+//   column: CollectionRuleColumn!
+//   relation: CollectionRuleRelation!
+//   condition: String!
+// }
+interface ShopifyCollectionInput {
+  id?: string; // Only for updates
+  title: string;
+  handle: string;
+  descriptionHtml: string;
+  sortOrder: string; // Ensure this matches Shopify's CollectionSortOrder enum
+  templateSuffix: string;
+  ruleSet?: CollectionRuleSetInput; // Add the ruleSet here
+}
+// --- End Collection Input type ---
+
 
 interface CollectionAddProductsResponse {
   collectionAddProducts: {
@@ -146,8 +212,20 @@ class ShopifyCollectionSyncService {
 
   // Generate a hash for a collection based on its properties
   private generateCollectionHash(collection: ShopifyCollection): string {
-    // Create a hash based on collection metadata
-    const collectionData = `${collection.title}|${collection.handle}|${collection.descriptionHtml}|${collection.sortOrder}|${collection.templateSuffix}`;
+    // Create a hash based on collection metadata, including a stable representation of ruleset
+    let ruleSetString = 'null'; // Default if no ruleSet
+    if (collection.ruleSet && collection.ruleSet.rules) {
+       // Sort rules by column, then relation, then condition for stability
+       const sortedRules = [...collection.ruleSet.rules].sort((a, b) => {
+         if (a.column !== b.column) return a.column.localeCompare(b.column);
+         if (a.relation !== b.relation) return a.relation.localeCompare(b.relation);
+         return a.condition.localeCompare(b.condition);
+       });
+       const rulesData = sortedRules.map(r => `${r.column}|${r.relation}|${r.condition}`).join(';');
+       ruleSetString = `${collection.ruleSet.appliedDisjunctively}|${rulesData}`;
+    }
+
+    const collectionData = `${collection.title}|${collection.handle}|${collection.descriptionHtml}|${collection.sortOrder}|${collection.templateSuffix}|${ruleSetString}`;
     return crypto.createHash('md5').update(collectionData).digest('hex');
   }
 
@@ -371,14 +449,31 @@ class ShopifyCollectionSyncService {
       // The standard way is `collectionAddProducts` or `collectionRemoveProducts` mutations after update.
       // However, let's try including it in the input for `collectionUpdate` first.
       // Base input for create/update - ID will be added specifically for updates.
-      const collectionBaseInput = {
+      const collectionBaseInput: ShopifyCollectionInput = { // Use the defined input type
         title: collection.title,
         handle: collection.handle, // Ensure handle is included for updates/creates
         descriptionHtml: collection.descriptionHtml,
-        sortOrder: collection.sortOrder,
+        sortOrder: collection.sortOrder, // Ensure this value matches Shopify's CollectionSortOrder enum (e.g., MANUAL, BEST_SELLING)
         templateSuffix: collection.templateSuffix
         // NOTE: products removed - will be handled by collectionAddProducts
       };
+
+      // --- Add ruleSet to input if present ---
+      if (collection.ruleSet) {
+        // Map the ruleSet structure to the format Shopify expects for input
+        // IMPORTANT: Ensure the `column` and `relation` strings EXACTLY match
+        // Shopify's expected Enum values (e.g., "TAG", "EQUALS").
+        // You might need a mapping function if your external API uses different values.
+        collectionBaseInput.ruleSet = {
+            appliedDisjunctively: collection.ruleSet.appliedDisjunctively,
+            rules: collection.ruleSet.rules.map(rule => ({
+                column: rule.column, // e.g., "TAG" - Must match CollectionRuleColumn!
+                relation: rule.relation, // e.g., "EQUALS" - Must match CollectionRuleRelation!
+                condition: rule.condition
+            }))
+        };
+      }
+      // --- End Add ruleSet ---
 
       if (exists && existingMappedShopifyId) {
         // 2. Found in DB by Hash: Update Shopify collection if products changed
@@ -390,9 +485,10 @@ class ShopifyCollectionSyncService {
           try {
             // Attempt to update metadata and products together
              const updateResponse = await this.graphqlClient.request<CollectionUpdateResponse>(
-              COLLECTION_UPDATE_MUTATION, 
-              { 
-                input: { ...collectionBaseInput, id: existingMappedShopifyId } // Add ID to the input object
+              COLLECTION_UPDATE_MUTATION,
+              {
+                // Pass the entire input object, including the ID for updates
+                input: { ...collectionBaseInput, id: existingMappedShopifyId }
               }
             );
 
@@ -437,14 +533,14 @@ class ShopifyCollectionSyncService {
         if (foundShopifyCollection && foundShopifyCollection.id) {
            // 4. Found in Shopify by Handle: Update existing Shopify collection
            const targetShopifyId = foundShopifyCollection.id;
-           console.log(`⤴️ Found existing collection in Shopify by handle: ${collection.handle} (ID: ${targetShopifyId}). Updating it...`);
-
+           console.log(`⤴️ Found existing collection in Shopify by handle: ${collection.handle} (ID: ${targetShopifyId}). Updating it...`);            
            try {
              // Use COLLECTION_UPDATE_MUTATION
              const updateResponse = await this.graphqlClient.request<CollectionUpdateResponse>(
-               COLLECTION_UPDATE_MUTATION, 
-               { 
-                  input: { ...collectionBaseInput, id: targetShopifyId } // Add ID to the input object
+               COLLECTION_UPDATE_MUTATION,
+               {
+                 // Pass the entire input object, including the ID for updates
+                  input: { ...collectionBaseInput, id: targetShopifyId }
                }
              );
 
@@ -485,7 +581,8 @@ class ShopifyCollectionSyncService {
             // Use COLLECTION_CREATE_MUTATION
             const createResponse = await this.graphqlClient.request<CollectionCreateResponse>(
               COLLECTION_CREATE_MUTATION,
-              { input: collectionBaseInput } // Use base input for creation (no ID)
+              // Pass the input object *without* the ID for creates
+              { input: collectionBaseInput }
             );
             
             if (createResponse.collectionCreate.userErrors?.length > 0) {
