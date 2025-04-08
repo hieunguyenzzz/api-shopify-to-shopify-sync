@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import { GraphQLClient } from 'graphql-request';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { FILE_CREATE_MUTATION } from '../graphql/shopify-mutations';
-import mongoDBService from './mongodb.service';
+import mongoDBService, { FileMappingDocument } from './mongodb.service';
 import crypto from 'crypto';
 
 // Load environment variables
@@ -49,11 +49,20 @@ interface FileCreateResponse {
 class ShopifyFileSyncService {
   private graphqlClient: GraphQLClient;
   private externalFilesApiUrl: string;
+  private fileMappingsCache: Map<string, FileMappingDocument> | null = null;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalFilesApiUrl = `${externalApiBaseUrl}/api/files`;
+  }
+
+  // Load all file mappings from MongoDB
+  private async loadFileMappings(): Promise<void> {
+    if (this.fileMappingsCache === null) {
+      this.fileMappingsCache = await mongoDBService.getAllFileMappings();
+      console.log(`📋 Loaded ${this.fileMappingsCache.size} file mappings from MongoDB`);
+    }
   }
 
   // Fetch files from external API
@@ -75,11 +84,11 @@ class ShopifyFileSyncService {
     return crypto.createHash('md5').update(fileData).digest('hex');
   }
 
-  // Check if a file is already in our database
+  // Check if a file is already in our database using the cache
   async checkFileByHash(fileHash: string): Promise<boolean> {
     try {
-      const existingFile = await mongoDBService.findFileByHash(fileHash);
-      return existingFile !== null;
+      await this.loadFileMappings();
+      return this.fileMappingsCache!.has(fileHash);
     } catch (error) {
       console.error('❌ Error checking file by hash:', error);
       return false;
@@ -91,6 +100,19 @@ class ShopifyFileSyncService {
     try {
       const success = await mongoDBService.saveFileMapping(fileHash, shopifyFileId, externalFileId, url, mimeType);
       if (success) {
+        // Update the cache with the new mapping
+        if (this.fileMappingsCache !== null) {
+          const now = new Date();
+          this.fileMappingsCache.set(fileHash, {
+            fileHash,
+            shopifyFileId,
+            externalFileId,
+            url,
+            mimeType,
+            createdAt: now,
+            lastUsed: now
+          });
+        }
         console.log(`✅ Successfully created file mapping for file ID: ${shopifyFileId} (External ID: ${externalFileId})`);
       } else {
         console.error(`❌ Failed to create file mapping for file ID: ${shopifyFileId}`);
@@ -197,6 +219,9 @@ class ShopifyFileSyncService {
       
       // Initialize MongoDB connection if not already initialized
       await mongoDBService.initialize();
+      
+      // Load all file mappings up front
+      await this.loadFileMappings();
       
       // Fetch files from external API
       const externalFiles = await this.fetchExternalFiles();

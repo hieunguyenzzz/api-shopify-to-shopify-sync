@@ -577,10 +577,13 @@ class ShopifyCollectionSyncService {
             return false; // Stop sync for this collection on error
           }
 
-          console.log(`✅ Successfully updated collection metadata/ruleset in Shopify: ${collection.title}`);
+          console.log(`✅ Successfully updated collection metadata/ruleset in Shopify: ${collection.title} (ID: ${existingMappedShopifyId})`);
 
           // Publish collection after update
-          await this.publishCollection(existingMappedShopifyId);
+        //   const publishResult = await this.publishCollection(existingMappedShopifyId);
+        //   if (!publishResult) {
+        //     console.warn(`⚠️ Failed to publish collection ${collection.title} (ID: ${existingMappedShopifyId}), but metadata was updated successfully.`);
+        //   }
 
           // --- Skip product add if ruleSet exists --- 
           if (!collection.ruleSet) {
@@ -637,7 +640,10 @@ class ShopifyCollectionSyncService {
              console.log(`✅ Successfully updated collection metadata/ruleset in Shopify (found by handle): ${updatedCollection.title} (ID: ${updatedCollection.id})`);
 
              // Publish collection after update
-             await this.publishCollection(targetShopifyId);
+             const publishResult = await this.publishCollection(targetShopifyId);
+             if (!publishResult) {
+               console.warn(`⚠️ Failed to publish collection ${collection.title} (ID: ${targetShopifyId}), but metadata was updated successfully.`);
+             }
 
              // --- Skip product add if ruleSet exists --- 
              if (!collection.ruleSet) {
@@ -701,7 +707,10 @@ class ShopifyCollectionSyncService {
             console.log(`✅ Successfully created collection in Shopify: ${collection.title} (ID: ${newShopifyCollectionId}).`);
 
             // Publish newly created collection
-            await this.publishCollection(newShopifyCollectionId);
+            const publishResult = await this.publishCollection(newShopifyCollectionId);
+            if (!publishResult) {
+              console.warn(`⚠️ Failed to publish newly created collection ${collection.title} (ID: ${newShopifyCollectionId}). The collection exists but might not be visible on the storefront.`);
+            }
 
             // --- Skip product add if ruleSet exists --- 
              if (!collection.ruleSet) {

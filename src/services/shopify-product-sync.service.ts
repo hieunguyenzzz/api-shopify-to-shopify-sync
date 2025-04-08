@@ -16,7 +16,8 @@ import {
   PRODUCT_SET_MUTATION, 
   PRODUCT_BY_HANDLE_QUERY,
   FILE_CREATE_MUTATION,
-  PRODUCT_WITH_VARIANTS_QUERY
+  PRODUCT_WITH_VARIANTS_QUERY,
+  COLLECTION_PUBLISH_MUTATION
 } from '../graphql/shopify-mutations';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { variantIdMappingService } from './variant-id-mapping.service';
@@ -935,6 +936,12 @@ export class ShopifyProductSyncService {
         
         // Create product mapping between external API and Shopify
         await this.createProductMapping(shopifyProductId, productHandle);
+        
+        // Publish the product
+        const publishResult = await this.publishProduct(shopifyProductId);
+        if (!publishResult) {
+          console.warn(`⚠️ Failed to publish product ${productData.input.title} (ID: ${shopifyProductId}), but product was synced successfully.`);
+        }
       }
       
       return result.product;
@@ -1058,6 +1065,52 @@ export class ShopifyProductSyncService {
       });
     } catch (error) {
       console.error('❌ Error tracking synced variant:', error);
+    }
+  }
+
+  // Publish a product to the specified publication
+  async publishProduct(shopifyProductId: string): Promise<boolean> {
+    try {
+      console.log(`📢 Publishing product to publication: ${shopifyProductId}`);
+      
+      // Define the interface for the response
+      interface ProductPublishResponse {
+        publishablePublish: {
+          publishable: {
+            publishedOnPublication: boolean;
+          } | null;
+          shop: {
+            id: string;
+          };
+          userErrors: Array<{
+            field: string;
+            message: string;
+          }>;
+        }
+      }
+      
+      const response = await this.graphqlClient.request<ProductPublishResponse>(
+        COLLECTION_PUBLISH_MUTATION,
+        { id: shopifyProductId }
+      );
+
+      if (response.publishablePublish.userErrors?.length > 0) {
+        console.error(`❌ Shopify API Error publishing product ${shopifyProductId}:`, 
+                     response.publishablePublish.userErrors);
+        return false;
+      }
+
+      if (!response.publishablePublish.publishable) {
+        console.error(`❌ Shopify API returned null publishable after publishing product ${shopifyProductId}`);
+        return false;
+      }
+
+      const publishedOnPublication = response.publishablePublish.publishable.publishedOnPublication;
+      console.log(`✅ Successfully published product ${shopifyProductId}. Published on publication: ${publishedOnPublication}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Error publishing product ${shopifyProductId}:`, error);
+      return false;
     }
   }
 

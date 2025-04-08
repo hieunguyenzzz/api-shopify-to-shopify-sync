@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-interface FileMappingDocument {
+export interface FileMappingDocument {
   fileHash: string;
   shopifyFileId: string;
   externalFileId: string;
@@ -102,6 +102,26 @@ class MongoDBService {
     } catch (error) {
       console.error('Error finding file by external ID:', error);
       return null;
+    }
+  }
+
+  public async getAllFileMappings(): Promise<Map<string, FileMappingDocument>> {
+    if (!this.initialized || !this.fileMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      const mappings = await this.fileMappingCollection!.find({}).toArray();
+      const mappingsMap = new Map<string, FileMappingDocument>();
+      
+      mappings.forEach(mapping => {
+        mappingsMap.set(mapping.fileHash, mapping);
+      });
+      
+      return mappingsMap;
+    } catch (error) {
+      console.error('Error retrieving all file mappings:', error);
+      return new Map();
     }
   }
 
