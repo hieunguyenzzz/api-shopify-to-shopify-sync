@@ -2,9 +2,13 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 import { GraphQLClient } from 'graphql-request';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
-import { FILE_CREATE_MUTATION } from '../graphql/shopify-mutations';
+import { FILE_CREATE_MUTATION, STAGED_UPLOADS_CREATE_MUTATION } from '../graphql/shopify-mutations';
 import mongoDBService, { FileMappingDocument } from './mongodb.service';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
+import FormData from 'form-data';
 
 // Load environment variables
 dotenv.config();
@@ -38,6 +42,23 @@ interface FileCreateResponse {
       id: string;
       alt: string;
       createdAt: string;
+    }>;
+    userErrors: Array<{
+      field: string;
+      message: string;
+    }>;
+  }
+}
+
+interface StagedUploadResponse {
+  stagedUploadsCreate: {
+    stagedTargets: Array<{
+      url: string;
+      resourceUrl: string;
+      parameters: Array<{
+        name: string;
+        value: string;
+      }>;
     }>;
     userErrors: Array<{
       field: string;
@@ -123,6 +144,156 @@ class ShopifyFileSyncService {
     }
   }
 
+  // Helper function to get file size from URL
+  private async getFileSizeFromUrl(url: string): Promise<number> {
+    try {
+      const response = await axios.head(url);
+      const contentLength = response.headers['content-length'];
+      return contentLength ? parseInt(contentLength, 10) : 0;
+    } catch (error) {
+      console.error(`❌ Error getting file size for URL ${url}:`, error);
+      return 0;
+    }
+  }
+
+  // Helper function to download file from URL to temp directory
+  private async downloadFile(url: string, filename: string): Promise<string> {
+    try {
+      const tempDir = path.join(__dirname, '../../temp');
+      
+      // Create temp directory if it doesn't exist
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      
+      const filePath = path.join(tempDir, filename);
+      const writer = fs.createWriteStream(filePath);
+      
+      const response = await axios({
+        url,
+        method: 'GET',
+        responseType: 'stream'
+      });
+      
+      response.data.pipe(writer);
+      
+      return new Promise((resolve, reject) => {
+        writer.on('finish', () => resolve(filePath));
+        writer.on('error', reject);
+      });
+    } catch (error) {
+      console.error(`❌ Error downloading file from ${url}:`, error);
+      throw error;
+    }
+  }
+
+  // Upload video file using staged uploads
+  private async uploadVideoFile(file: ShopifyFile): Promise<string | null> {
+    try {
+      console.log(`🎬 Processing video file: ${file.filename}`);
+      
+      // 1. Get file size
+      const fileSize = await this.getFileSizeFromUrl(file.url);
+      if (!fileSize) {
+        console.error(`❌ Could not determine file size for ${file.filename}`);
+        return null;
+      }
+      
+      // Extract the file extension from the URL
+      const urlExtension = this.getFileExtensionFromUrl(file.url);
+      // Ensure the filename has the correct extension
+      const filename = this.ensureCorrectFileExtension(file.filename, urlExtension);
+      
+      // 2. Create staged upload
+      const stagedUploadInput = {
+        filename,
+        mimeType: file.mimeType,
+        resource: "VIDEO",
+        fileSize: String(fileSize),
+        httpMethod: "POST"
+      };
+      
+      const stagedUploadResponse = await this.graphqlClient.request<StagedUploadResponse>(
+        STAGED_UPLOADS_CREATE_MUTATION,
+        { input: [stagedUploadInput] }
+      );
+      
+      if (stagedUploadResponse.stagedUploadsCreate.userErrors.length > 0) {
+        console.error(`❌ Staged upload creation failed for ${file.filename}:`, 
+          stagedUploadResponse.stagedUploadsCreate.userErrors);
+        return null;
+      }
+      
+      const stagedTarget = stagedUploadResponse.stagedUploadsCreate.stagedTargets[0];
+      const { url, parameters, resourceUrl } = stagedTarget;
+      
+      // 3. Download the file to a temp location
+      const tempFilePath = await this.downloadFile(file.url, filename);
+      
+      // 4. Upload file to staged URL
+      const formData = new FormData();
+      
+      // Add all parameters from the staged upload response
+      parameters.forEach(param => {
+        formData.append(param.name, param.value);
+      });
+      
+      // Add the file itself
+      const fileBuffer = await promisify(fs.readFile)(tempFilePath);
+      formData.append('file', fileBuffer, {
+        filename,
+        contentType: file.mimeType
+      });
+      
+      // Upload to the staged URL
+      await axios.post(url, formData, {
+        headers: {
+          ...formData.getHeaders()
+        }
+      });
+      
+      // 5. Clean up the temp file
+      await promisify(fs.unlink)(tempFilePath);
+      
+      console.log(`✅ Successfully uploaded video to staged URL for ${file.filename}`);
+      
+      // Return the resourceUrl to be used in fileCreate mutation
+      return resourceUrl;
+      
+    } catch (error) {
+      console.error(`❌ Error uploading video file ${file.filename}:`, error);
+      return null;
+    }
+  }
+
+  // Helper function to get file extension from URL
+  private getFileExtensionFromUrl(url: string): string {
+    // Parse the URL to extract the extension
+    try {
+      const urlPath = new URL(url).pathname;
+      const extension = path.extname(urlPath);
+      return extension || '.mp4'; // Default to .mp4 if no extension found
+    } catch (error) {
+      console.warn(`⚠️ Failed to extract file extension from URL: ${url}`);
+      return '.mp4'; // Default to .mp4
+    }
+  }
+
+  // Helper function to ensure filename has correct extension
+  private ensureCorrectFileExtension(filename: string, requiredExtension: string): string {
+    // If the filename already has the correct extension, return it as is
+    if (path.extname(filename) === requiredExtension) {
+      return filename;
+    }
+    
+    // Strip any existing extension and add the required one
+    const nameWithoutExtension = path.basename(filename, path.extname(filename));
+    const correctedFilename = `${nameWithoutExtension}${requiredExtension}`;
+    
+    console.log(`📝 Correcting filename extension: "${filename}" -> "${correctedFilename}"`);
+    return correctedFilename;
+  }
+
   // Sync a single file
   async syncFile(file: ShopifyFile): Promise<boolean> {
     try {
@@ -142,16 +313,76 @@ class ShopifyFileSyncService {
       // Check if the mediaType is 'OTHER' and skip if it is
       if (file.mediaType === 'OTHER') {
         console.log(`⏭️ Skipping file with mediaType 'OTHER': ${file.filename}`);
-        // We return true because skipping isn't an error, the sync process for this file just doesn't proceed.
-        // If you want skipped files to be counted differently, you might adjust the return value or add logging elsewhere.
         return true;
+      } else if (file.mediaType === 'VIDEO') {
+        console.log(`🎬 Detected video file: ${file.filename}`);
+        
+        // Special handling for video files
+        const resourceUrl = await this.uploadVideoFile(file);
+        
+        if (!resourceUrl) {
+          console.error(`❌ Failed to process video file: ${file.filename}`);
+          return false;
+        }
+        
+        // Extract the file extension from the URL and ensure filename has correct extension
+        const urlExtension = this.getFileExtensionFromUrl(file.url);      
+        
+        // Create file in Shopify using the resource URL
+        const fileInput: {
+          originalSource: string;
+          contentType: string;
+          alt?: string;
+        } = {
+          originalSource: resourceUrl,
+          contentType: file.mediaType
+        };
+
+        if (file.alt && typeof file.alt === 'string' && file.alt.trim() !== '') {
+          fileInput.alt = file.alt;
+        }
+        
+        try {
+          const response = await this.graphqlClient.request<FileCreateResponse>(
+            FILE_CREATE_MUTATION,
+            { files: [fileInput] }
+          );
+          
+          if (response.fileCreate.userErrors && response.fileCreate.userErrors.length > 0) {
+            console.error(`❌ Shopify API Error creating video file ${file.filename}:`, response.fileCreate.userErrors);
+            return false;
+          }
+          
+          if (!response.fileCreate.files || response.fileCreate.files.length === 0) {
+            console.error(`❌ Shopify API did not return file data for video ${file.filename}`);
+            return false;
+          }
+          
+          const createdShopifyFile = response.fileCreate.files[0];
+          
+          if (!createdShopifyFile || !createdShopifyFile.id) {
+            console.error(`❌ Shopify API returned invalid file data for video ${file.filename}`);
+            return false;
+          }
+          
+          const newShopifyFileId = createdShopifyFile.id;
+          console.log(`✅ Successfully created video file in Shopify: ${file.filename} (ID: ${newShopifyFileId})`);
+          
+          // Store the mapping
+          await this.createFileMapping(fileHash, newShopifyFileId, file.id, file.url, file.mimeType);
+          
+          return true;
+        } catch (gqlError) {
+          console.error(`❌ GraphQL Error creating video file ${file.filename} in Shopify:`, gqlError);
+          return false;
+        }
       }
       
+      // Handle non-video files with the original approach
       // File doesn't exist in DB, create it in Shopify
       console.log(`🚀 File not found in DB. Creating file in Shopify: ${file.filename}`);
 
       // Prepare input for the fileCreate mutation
-      // Assuming file.mediaType is compatible with Shopify's FileContentType enum (e.g., 'IMAGE', 'VIDEO')
       const fileInput: {
         originalSource: string;
         filename: string;
@@ -160,7 +391,7 @@ class ShopifyFileSyncService {
       } = {
         originalSource: file.url,
         filename: file.filename,
-        contentType: file.mediaType, // Use mediaType from the external API response
+        contentType: file.mediaType,
       };
 
       // Add alt text if it exists and is a non-empty string on the source file object
@@ -169,43 +400,41 @@ class ShopifyFileSyncService {
       }
 
       try {
-          const response = await this.graphqlClient.request<FileCreateResponse>(
-              FILE_CREATE_MUTATION,
-              { files: [fileInput] } // The mutation expects an array of files
-          );
+        const response = await this.graphqlClient.request<FileCreateResponse>(
+          FILE_CREATE_MUTATION,
+          { files: [fileInput] }
+        );
 
-          if (response.fileCreate.userErrors && response.fileCreate.userErrors.length > 0) {
-              console.error(`❌ Shopify API Error creating file ${file.filename}:`, response.fileCreate.userErrors);
-              return false; // Fail the sync for this file if Shopify returns errors
-          }
+        if (response.fileCreate.userErrors && response.fileCreate.userErrors.length > 0) {
+          console.error(`❌ Shopify API Error creating file ${file.filename}:`, response.fileCreate.userErrors);
+          return false;
+        }
 
-          // Check if files array exists and has elements
-          if (!response.fileCreate.files || response.fileCreate.files.length === 0) {
-               console.error(`❌ Shopify API did not return file data for ${file.filename}`);
-               return false; 
-          }
+        // Check if files array exists and has elements
+        if (!response.fileCreate.files || response.fileCreate.files.length === 0) {
+          console.error(`❌ Shopify API did not return file data for ${file.filename}`);
+          return false; 
+        }
 
-          const createdShopifyFile = response.fileCreate.files[0];
+        const createdShopifyFile = response.fileCreate.files[0];
 
-          // Check if the created file object and its ID are valid
-          if (!createdShopifyFile || !createdShopifyFile.id) {
-               console.error(`❌ Shopify API returned invalid file data for ${file.filename}`);
-               return false;
-          }
+        // Check if the created file object and its ID are valid
+        if (!createdShopifyFile || !createdShopifyFile.id) {
+          console.error(`❌ Shopify API returned invalid file data for ${file.filename}`);
+          return false;
+        }
 
-          const newShopifyFileId = createdShopifyFile.id;
-          console.log(`✅ Successfully created file in Shopify: ${file.filename} (ID: ${newShopifyFileId})`);
+        const newShopifyFileId = createdShopifyFile.id;
+        console.log(`✅ Successfully created file in Shopify: ${file.filename} (ID: ${newShopifyFileId})`);
 
-          // Now store the mapping with the *new* Shopify file ID from the mutation response
-          await this.createFileMapping(fileHash, newShopifyFileId, file.id, file.url, file.mimeType);
+        // Now store the mapping with the *new* Shopify file ID from the mutation response
+        await this.createFileMapping(fileHash, newShopifyFileId, file.id, file.url, file.mimeType);
 
-          return true; // Successfully created in Shopify and mapped
-
+        return true; // Successfully created in Shopify and mapped
       } catch (gqlError) {
-           console.error(`❌ GraphQL Error creating file ${file.filename} in Shopify:`, gqlError);
-           return false; // Fail the sync for this file if the GraphQL request fails
+        console.error(`❌ GraphQL Error creating file ${file.filename} in Shopify:`, gqlError);
+        return false; // Fail the sync for this file if the GraphQL request fails
       }
-      
     } catch (error) {
       console.error(`❌ Top-level error syncing file ${file.filename}:`, error);
       return false;

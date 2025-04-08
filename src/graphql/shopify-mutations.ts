@@ -57,6 +57,24 @@ mutation fileCreate($files: [FileCreateInput!]!) {
   }
 }`;
 
+export const STAGED_UPLOADS_CREATE_MUTATION = `
+mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+  stagedUploadsCreate(input: $input) {
+    stagedTargets {
+      url
+      resourceUrl
+      parameters {
+        name
+        value
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}`;
+
 export const PRODUCT_WITH_VARIANTS_QUERY = `
   query productWithVariants($id: ID!) {
     product(id: $id) {
