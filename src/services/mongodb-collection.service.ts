@@ -123,6 +123,69 @@ class MongoDBCollectionService {
     }
   }
 
+  /**
+   * Finds all collection mappings in the database.
+   */
+  public async findAllMappings(): Promise<CollectionMappingDocument[]> {
+    if (!this.initialized || !this.collectionMappingCollection) {
+      await this.initialize(); // Ensure initialized
+    }
+
+    // Ensure collection is not null after potential initialization
+    if (!this.collectionMappingCollection) {
+        console.error("findAllMappings: Collection mapping collection is null after initialization attempt.");
+        return [];
+    }
+
+    try {
+      // Actual Implementation:
+      const mappings = await this.collectionMappingCollection.find({}).toArray();
+      console.log(`findAllMappings: Found ${mappings.length} mappings.`);
+      return mappings;
+
+      // Placeholder Implementation (Remove or comment out when implementing):
+      // console.warn("findAllMappings: Placeholder implementation. Needs actual DB query.");
+      // return []; // Placeholder
+    } catch (error) {
+      console.error('Error finding all collection mappings:', error);
+      return []; // Return empty array on error
+    }
+  }
+
+  /**
+   * Deletes a collection mapping by its Shopify Collection GID.
+   */
+  public async deleteCollectionMappingByShopifyId(shopifyCollectionId: string): Promise<boolean> {
+    if (!this.initialized || !this.collectionMappingCollection) {
+      await this.initialize(); // Ensure initialized
+    }
+
+     // Ensure collection is not null after potential initialization
+     if (!this.collectionMappingCollection) {
+        console.error(`deleteCollectionMappingByShopifyId: Collection mapping collection is null after initialization attempt for Shopify ID ${shopifyCollectionId}.`);
+        return false;
+    }
+
+    try {
+      // Actual Implementation:
+      const result = await this.collectionMappingCollection.deleteOne({ shopifyCollectionId });
+      const success = result.deletedCount === 1;
+      if (success) {
+        console.log(`deleteCollectionMappingByShopifyId: Successfully deleted mapping for Shopify ID ${shopifyCollectionId}.`);
+      } else {
+        console.warn(`deleteCollectionMappingByShopifyId: No mapping found or deleted for Shopify ID ${shopifyCollectionId}. (Deleted count: ${result.deletedCount})`);
+      }
+      return success;
+
+      // Placeholder Implementation (Remove or comment out when implementing):
+      // console.warn(`deleteCollectionMappingByShopifyId: Placeholder implementation for ${shopifyCollectionId}. Needs actual DB query.`);
+      // return false; // Placeholder
+    } catch (error) {
+      console.error(`Error deleting collection mapping for Shopify ID ${shopifyCollectionId}:`, error);
+      return false;
+    }
+  }
+
   public async close(): Promise<void> {
     if (this.client) {
       await this.client.close();

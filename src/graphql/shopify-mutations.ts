@@ -313,4 +313,17 @@ export const COLLECTION_PRODUCTS_QUERY = `
   }
 `;
 
+// Deletes a collection by its GID
+export const COLLECTION_DELETE_MUTATION = `
+  mutation collectionDelete($input: CollectionDeleteInput!) {
+    collectionDelete(input: $input) {
+      deletedCollectionId
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 

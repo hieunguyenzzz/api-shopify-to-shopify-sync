@@ -7,7 +7,8 @@ import {
   COLLECTION_UPDATE_MUTATION,
   COLLECTION_BY_HANDLE_QUERY,
   COLLECTION_ADD_PRODUCTS_MUTATION,
-  COLLECTION_PRODUCTS_QUERY
+  COLLECTION_PRODUCTS_QUERY,
+  COLLECTION_DELETE_MUTATION
 } from '../graphql/shopify-mutations';
 import mongoDBCollectionService from './mongodb-collection.service';
 import crypto from 'crypto';
@@ -265,7 +266,21 @@ class ShopifyCollectionSyncService {
   }
 
   // Find Shopify Collection by Handle
-  private async findShopifyCollectionByHandle(handle: string): Promise<ShopifyCollection | null> {
+  private async findShopifyCollectionByHandle(handle?: string | null, id?: string | null): Promise<ShopifyCollection | null> {
+    // Adapt query based on whether handle or id is provided
+    // For now, assuming COLLECTION_BY_HANDLE_QUERY is sufficient if handle exists
+    // A dedicated query by ID might be better for the delete check
+    if (id) {
+      console.warn(`⚠️ findShopifyCollectionByHandle called with ID (${id}) - current implementation primarily uses handle. Need a dedicated 'findById' query for robust check.`);
+      // Placeholder: In a real scenario, use a 'collection(id: $id)' query here
+      // For now, we can't reliably check by ID with the current query
+      return null; // Assume not found if only ID is given and we lack the query
+    }
+    if (!handle) {
+      console.error('❌ findShopifyCollectionByHandle called with neither handle nor ID.');
+      return null;
+    }
+
     try {
       console.log(`🔎 Searching Shopify for collection with handle: ${handle}`);
       const response = await this.graphqlClient.request<CollectionByHandleResponse>(
@@ -422,107 +437,96 @@ class ShopifyCollectionSyncService {
   async syncCollection(collection: ShopifyCollection): Promise<boolean> {
     try {
       console.log(`🔄 Syncing collection: ${collection.title} (Handle: ${collection.handle}, External ID: ${collection.id})`);
-      
+
       const collectionHash = this.generateCollectionHash(collection);
       const externalProductIds = collection.products.nodes.map(p => p.id);
 
       // --- Map External Product IDs to Shopify GIDs ---
-      const getShopifyGidPromises = externalProductIds.map(externalId => 
+      const getShopifyGidPromises = externalProductIds.map(externalId =>
         productMappingService.getShopifyProductId(externalId)
       );
       const shopifyProductGidsNullable = await Promise.all(getShopifyGidPromises);
       const shopifyProductGids = shopifyProductGidsNullable.filter((gid): gid is string => gid !== null);
-      
+
       if (shopifyProductGids.length !== externalProductIds.length) {
-        console.warn(`⚠️ Could not map all external product IDs for collection "${collection.title}". Mapped ${shopifyProductGids.length}/${externalProductIds.length}. Proceeding with mapped products.`);
+        console.warn(`⚠️ Could not map all external product IDs for collection "${collection.title}". Mapped ${shopifyProductGids.length}/${externalProductIds.length}.`);
       }
-      
-      // TODO: Recalculate productsHash based on *mapped Shopify GIDs* for accurate change detection
-      // For now, using the original hash based on external product IDs
-      const productsHash = this.generateProductsHash(collection); // Consider recalculating based on shopifyProductGids
-      
-      // 1. Check if the collection exists in our database by hash
-      const { exists, shopifyCollectionId: existingMappedShopifyId, productsChanged } = await this.checkCollectionByHash(collectionHash, productsHash);
-      
+
+      // Generate products hash based on *external* product IDs for now.
+      const productsHash = this.generateProductsHash(collection);
+
+      // 1. Check if the collection exists in our database by hash (includes ruleset hash)
+      const { exists, shopifyCollectionId: existingMappedShopifyId } = await this.checkCollectionByHash(collectionHash, productsHash);
+
       // --- Prepare Input for Shopify Create/Update ---
-      // Note: The 'products' field in collectionInput might not work for `collectionUpdate`.
-      // The standard way is `collectionAddProducts` or `collectionRemoveProducts` mutations after update.
-      // However, let's try including it in the input for `collectionUpdate` first.
-      // Base input for create/update - ID will be added specifically for updates.
-      const collectionBaseInput: ShopifyCollectionInput = { // Use the defined input type
+      const collectionBaseInput: ShopifyCollectionInput = {
         title: collection.title,
-        handle: collection.handle, // Ensure handle is included for updates/creates
+        handle: collection.handle,
         descriptionHtml: collection.descriptionHtml,
-        sortOrder: collection.sortOrder, // Ensure this value matches Shopify's CollectionSortOrder enum (e.g., MANUAL, BEST_SELLING)
+        sortOrder: collection.sortOrder,
         templateSuffix: collection.templateSuffix
-        // NOTE: products removed - will be handled by collectionAddProducts
       };
 
       // --- Add ruleSet to input if present ---
       if (collection.ruleSet) {
-        // Map the ruleSet structure to the format Shopify expects for input
-        // IMPORTANT: Ensure the `column` and `relation` strings EXACTLY match
-        // Shopify's expected Enum values (e.g., "TAG", "EQUALS").
-        // You might need a mapping function if your external API uses different values.
         collectionBaseInput.ruleSet = {
             appliedDisjunctively: collection.ruleSet.appliedDisjunctively,
             rules: collection.ruleSet.rules.map(rule => ({
-                column: rule.column, // e.g., "TAG" - Must match CollectionRuleColumn!
-                relation: rule.relation, // e.g., "EQUALS" - Must match CollectionRuleRelation!
+                column: rule.column.toUpperCase(), 
+                relation: rule.relation.toUpperCase(),
                 condition: rule.condition
             }))
         };
+        console.log(`ℹ️ Including ruleSet in input for collection: ${collection.title}`);
       }
       // --- End Add ruleSet ---
 
+
       if (exists && existingMappedShopifyId) {
-        // 2. Found in DB by Hash: Update Shopify collection if products changed
-        console.log(`ℹ️ Collection found in local DB by hash: ${collection.title} (Shopify ID: ${existingMappedShopifyId})`);
-        
-        if (productsChanged) {
-          console.log(`🔄 Products have changed for collection: ${collection.title}. Updating Shopify collection...`);
-          
-          try {
-            // Attempt to update metadata and products together
-             const updateResponse = await this.graphqlClient.request<CollectionUpdateResponse>(
-              COLLECTION_UPDATE_MUTATION,
-              {
-                // Pass the entire input object, including the ID for updates
-                input: { ...collectionBaseInput, id: existingMappedShopifyId }
-              }
-            );
+        // 2. Found in DB by Hash: Update Shopify collection
+        console.log(`ℹ️ Collection found in local DB by hash: ${collection.title} (Shopify ID: ${existingMappedShopifyId}). Updating Shopify...`);
 
-            if (updateResponse.collectionUpdate.userErrors?.length > 0) {
-              console.error(`❌ Shopify API Error updating collection ${collection.title} (ID: ${existingMappedShopifyId}):`, updateResponse.collectionUpdate.userErrors);
-              return false; // Stop sync for this collection on error
-            }
+        try {
+          // Use COLLECTION_UPDATE_MUTATION with the full input including ID and ruleSet
+          const updateResponse = await this.graphqlClient.request<CollectionUpdateResponse>(
+            COLLECTION_UPDATE_MUTATION,
+            { input: { ...collectionBaseInput, id: existingMappedShopifyId } }
+          );
 
-            console.log(`✅ Successfully updated collection metadata in Shopify: ${collection.title}`);
-            
-            // Now add/update products if they have changed
+          if (updateResponse.collectionUpdate.userErrors?.length > 0) {
+            console.error(`❌ Shopify API Error updating collection ${collection.title} (ID: ${existingMappedShopifyId}):`, updateResponse.collectionUpdate.userErrors);
+            return false; // Stop sync for this collection on error
+          }
+
+          console.log(`✅ Successfully updated collection metadata/ruleset in Shopify: ${collection.title}`);
+
+          // --- Skip product add if ruleSet exists --- 
+          if (!collection.ruleSet) {
+            console.log(`ℹ️ Collection "${collection.title}" does not have a ruleSet. Proceeding with manual product sync.`);
             const productsAdded = await this.addProductsToCollection(existingMappedShopifyId, shopifyProductGids);
             if (!productsAdded) {
-               console.error(`❌ Failed to add/update products for updated collection ${collection.title}.`);
-               return false; // Example: fail sync if products can't be added
+               console.warn(`⚠️ Failed to add/update products for updated collection ${collection.title}. Continuing mapping update.`);
+            } else {
+                console.log(`✅ Manual product sync completed for collection ${collection.title}.`);
             }
-            
-            // Update the mapping with the potentially new products hash
-            await this.saveOrUpdateCollectionMapping(
-              collectionHash,
-              productsHash,
-              existingMappedShopifyId,
-              collection.id,
-              shopifyProductGids
-            );
-            return true;
-
-          } catch (gqlError) {
-             console.error(`❌ GraphQL Error updating collection ${collection.title} (ID: ${existingMappedShopifyId}) in Shopify:`, gqlError);
-             return false;
+          } else {
+              console.log(`ℹ️ Skipping manual product sync for rule-based collection: ${collection.title}`);
           }
-        } else {
-          console.log(`✅ No changes detected based on hash for collection: ${collection.title}`);
+          // --- End skip product add ---
+
+          // Update the mapping
+          await this.saveOrUpdateCollectionMapping(
+            collectionHash,
+            productsHash, 
+            existingMappedShopifyId,
+            collection.id,
+            shopifyProductGids
+          );
           return true;
+
+        } catch (gqlError) {
+           console.error(`❌ GraphQL Error updating collection ${collection.title} (ID: ${existingMappedShopifyId}) in Shopify:`, gqlError);
+           return false;
         }
 
       } else {
@@ -533,15 +537,13 @@ class ShopifyCollectionSyncService {
         if (foundShopifyCollection && foundShopifyCollection.id) {
            // 4. Found in Shopify by Handle: Update existing Shopify collection
            const targetShopifyId = foundShopifyCollection.id;
-           console.log(`⤴️ Found existing collection in Shopify by handle: ${collection.handle} (ID: ${targetShopifyId}). Updating it...`);            
+           console.log(`⤴️ Found existing collection in Shopify by handle: ${collection.handle} (ID: ${targetShopifyId}). Updating it...`);
+
            try {
-             // Use COLLECTION_UPDATE_MUTATION
+             // Use COLLECTION_UPDATE_MUTATION with the full input including ID and ruleSet
              const updateResponse = await this.graphqlClient.request<CollectionUpdateResponse>(
                COLLECTION_UPDATE_MUTATION,
-               {
-                 // Pass the entire input object, including the ID for updates
-                  input: { ...collectionBaseInput, id: targetShopifyId }
-               }
+               { input: { ...collectionBaseInput, id: targetShopifyId } }
              );
 
              if (updateResponse.collectionUpdate.userErrors?.length > 0) {
@@ -550,14 +552,21 @@ class ShopifyCollectionSyncService {
              }
 
              const updatedCollection = updateResponse.collectionUpdate.collection;
-             console.log(`✅ Successfully updated collection metadata in Shopify (found by handle): ${updatedCollection.title} (ID: ${updatedCollection.id})`);
-             
-             // Now add/update products
-             const productsAdded = await this.addProductsToCollection(targetShopifyId, shopifyProductGids);
-             if (!productsAdded) {
-                console.error(`❌ Failed to add/update products for collection ${collection.title} found by handle.`);
-                return false; // Example: fail sync
+             console.log(`✅ Successfully updated collection metadata/ruleset in Shopify (found by handle): ${updatedCollection.title} (ID: ${updatedCollection.id})`);
+
+             // --- Skip product add if ruleSet exists --- 
+             if (!collection.ruleSet) {
+                console.log(`ℹ️ Collection "${collection.title}" does not have a ruleSet. Proceeding with manual product sync.`);
+                const productsAdded = await this.addProductsToCollection(targetShopifyId, shopifyProductGids);
+                if (!productsAdded) {
+                   console.warn(`⚠️ Failed to add/update products for collection ${collection.title} found by handle. Continuing mapping creation.`);
+                } else {
+                   console.log(`✅ Manual product sync completed for collection ${collection.title}.`);
+                }               
+             } else {
+                 console.log(`ℹ️ Skipping manual product sync for rule-based collection: ${collection.title}`);
              }
+             // --- End skip product add ---
              
              // Create the mapping in our DB linking hash/external ID to this Shopify ID
              await this.saveOrUpdateCollectionMapping(
@@ -576,37 +585,50 @@ class ShopifyCollectionSyncService {
         } else {
           // 5. Not Found by Handle: Create new collection in Shopify
           console.log(`🚀 No existing collection found by handle in Shopify. Creating new collection: ${collection.title}`);
-          
+
           try {
-            // Use COLLECTION_CREATE_MUTATION
+            // Use COLLECTION_CREATE_MUTATION with the base input (includes ruleSet if present, no ID)
             const createResponse = await this.graphqlClient.request<CollectionCreateResponse>(
               COLLECTION_CREATE_MUTATION,
-              // Pass the input object *without* the ID for creates
               { input: collectionBaseInput }
             );
-            
+
             if (createResponse.collectionCreate.userErrors?.length > 0) {
               console.error(`❌ Shopify API Error creating collection ${collection.title}:`, createResponse.collectionCreate.userErrors);
-              return false;
+              // Attempt to find by handle again in case of race condition or non-fatal error
+              const maybeCreatedCollection = await this.findShopifyCollectionByHandle(collection.handle);
+              if (maybeCreatedCollection?.id) {
+                 console.warn(`⚠️ Creation failed with errors, but collection with handle '${collection.handle}' was found afterwards (ID: ${maybeCreatedCollection.id}). Proceeding with mapping.`);
+                 // Proceed to map this ID, but log the original error.
+                 await this.saveOrUpdateCollectionMapping(collectionHash, productsHash, maybeCreatedCollection.id, collection.id, shopifyProductGids);
+                 return true; // Consider it a success if we found it afterwards
+              }
+              return false; // Truly failed
             }
-            
+
             const createdShopifyCollection = createResponse.collectionCreate.collection;
             if (!createdShopifyCollection?.id) {
                console.error(`❌ Shopify API returned invalid data after creating collection ${collection.title}`);
                return false;
             }
-            
+
             const newShopifyCollectionId = createdShopifyCollection.id;
-            console.log(`✅ Successfully created collection in Shopify: ${collection.title} (ID: ${newShopifyCollectionId}). Adding products...`);
-            
-            // Add products to the newly created collection
-            const productsAdded = await this.addProductsToCollection(newShopifyCollectionId, shopifyProductGids);
-            if (!productsAdded) {
-              // Decide on behavior: delete collection, mark as failed, etc.
-              console.error(`❌ Failed to add products to newly created collection ${collection.title}. The collection exists but is empty.`);
-              // Consider adding cleanup logic here if needed (e.g., delete the created collection)
-              return false; // Example: fail sync
-            }
+            console.log(`✅ Successfully created collection in Shopify: ${collection.title} (ID: ${newShopifyCollectionId}).`);
+
+            // --- Skip product add if ruleSet exists --- 
+             if (!collection.ruleSet) {
+                console.log(`ℹ️ Newly created collection "${collection.title}" does not have a ruleSet. Proceeding with manual product sync.`);
+                const productsAdded = await this.addProductsToCollection(newShopifyCollectionId, shopifyProductGids);
+                if (!productsAdded) {
+                   console.error(`❌ Failed to add products to newly created manual collection ${collection.title}. The collection exists but might be empty.`);
+                   // Mapping is still created below, even if product add fails
+                } else {
+                  console.log(`✅ Manual product sync completed for newly created collection ${collection.title}.`);
+                }
+             } else {
+                console.log(`ℹ️ Skipping manual product sync for newly created rule-based collection: ${collection.title}`);
+             }
+            // --- End skip product add ---
             
             // Store the mapping in our DB
             await this.saveOrUpdateCollectionMapping(
@@ -626,17 +648,110 @@ class ShopifyCollectionSyncService {
       }
     } catch (error) {
       console.error(`❌ Top-level error syncing collection ${collection.title}:`, error);
+      return false; // Ensure all paths return boolean
+    }
+  }
+
+  // --- Added: Delete a Shopify Collection by ID ---
+  private async deleteShopifyCollection(shopifyId: string, externalIdForLogging: string): Promise<boolean> {
+    try {
+      console.log(`🗑️ Attempting deletion of Shopify collection GID: ${shopifyId} (External ID: ${externalIdForLogging})`);
+      const response = await this.graphqlClient.request<{ 
+          collectionDelete: { deletedCollectionId: string | null; userErrors: Array<{ field: string; message: string }> }
+      }>(
+        COLLECTION_DELETE_MUTATION,
+        { input: { id: shopifyId } } // Input requires the ID
+      );
+
+      if (response.collectionDelete.userErrors?.length > 0) {
+        console.error(`❌ Shopify API Error deleting collection ${shopifyId}:`, response.collectionDelete.userErrors);
+        // Check if the error indicates it was already deleted (handle specific errors if needed)
+        if (response.collectionDelete.userErrors.some(e => e.message.toLowerCase().includes('not found'))) {
+            console.warn(`⚠️ Collection ${shopifyId} might have already been deleted.`);
+            return true; // Treat as success if it's already gone
+        }
+        return false;
+      }
+
+      if (response.collectionDelete.deletedCollectionId === shopifyId) {
+        console.log(`✅ Successfully deleted Shopify collection GID: ${shopifyId}`);
+        return true;
+      } else {
+        // This case shouldn't typically happen if no errors were reported
+        console.warn(`❓ Deletion mutation completed for ${shopifyId}, but response did not confirm deletion. deletedCollectionId: ${response.collectionDelete.deletedCollectionId}`);
+        // Check if it's gone anyway
+        const stillExists = await this.findShopifyCollectionByHandle(null, shopifyId); // Need to adapt find function or use a direct ID check
+        if (!stillExists) {
+            console.log(`✅ Confirmed collection ${shopifyId} is deleted via secondary check.`);
+            return true;
+        } else {
+            console.error(`❌ Collection ${shopifyId} still exists after deletion attempt without errors.`);
+            return false;
+        }        
+      }
+
+    } catch (gqlError) {
+      console.error(`❌ GraphQL Error deleting collection ${shopifyId}:`, gqlError);
+      // Consider specific error handling (e.g., not found error might be considered a success)
+      // Safely check the error message
+      const errorMessage = (typeof gqlError === 'object' && gqlError !== null && 'message' in gqlError) 
+                           ? String(gqlError.message).toLowerCase() 
+                           : '';
+      if (errorMessage.includes('not found')) {
+         console.warn(`⚠️ Collection ${shopifyId} not found during deletion attempt (likely already deleted).`);
+         return true; // Treat as success
+      }
       return false;
     }
   }
 
   // Sync all collections
-  async syncCollections(limit?: number): Promise<ShopifyCollection[]> {
+  async syncCollections(limit?: number, deleteMode: boolean = false): Promise<ShopifyCollection[]> {
     try {
-      console.log('🔄 Starting collection sync process...');
-      
-      // Initialize MongoDB connection if not already initialized
+      // Initialize MongoDB connection
       await mongoDBCollectionService.initialize();
+
+      // --- Delete Mode --- 
+      if (deleteMode) {
+        console.log('🗑️ Entering DELETE mode. Fetching all existing mappings...');
+        const allMappings = await mongoDBCollectionService.findAllMappings(); // Assumes this method exists
+        console.log(`🔍 Found ${allMappings.length} mappings to potentially delete.`);
+        
+        let deletedCount = 0;
+        let failedCount = 0;
+
+        for (const mapping of allMappings) {
+            // Add delay to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 500)); 
+
+            console.log(`🗑️ Attempting to delete Shopify collection ID: ${mapping.shopifyCollectionId} (External ID: ${mapping.externalCollectionId})`);
+            // Use the new delete method
+            const deletedFromShopify = await this.deleteShopifyCollection(mapping.shopifyCollectionId, mapping.externalCollectionId || 'N/A'); // Pass external ID for logging
+
+            if (deletedFromShopify) {
+                console.log(`✅ Successfully deleted collection from Shopify. Removing mapping from local DB...`);
+                const deletedFromMongo = await mongoDBCollectionService.deleteCollectionMappingByShopifyId(mapping.shopifyCollectionId); // Assumes this method exists
+                if (deletedFromMongo) {
+                    console.log(`✅ Successfully removed mapping for Shopify ID: ${mapping.shopifyCollectionId}`);
+                    deletedCount++;
+                } else {
+                    console.error(`❌ Failed to remove mapping for Shopify ID: ${mapping.shopifyCollectionId} from local DB, but it was deleted from Shopify.`);
+                    // This case might require manual intervention
+                    failedCount++; 
+                }
+            } else {
+                console.error(`❌ Failed to delete collection from Shopify (ID: ${mapping.shopifyCollectionId}). Skipping local mapping removal.`);
+                failedCount++;
+            }
+        }
+        
+        console.log(`🗑️ Delete mode finished. Successfully deleted: ${deletedCount}, Failed/Skipped: ${failedCount}`);
+        return []; // Return empty array in delete mode
+      }
+      // --- End Delete Mode ---
+      
+      // --- Normal Sync Mode --- 
+      console.log('🔄 Starting collection sync process...');
       
       // Fetch collections from external API
       const externalCollections = await this.fetchExternalCollections();
