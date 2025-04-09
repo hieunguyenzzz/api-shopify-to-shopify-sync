@@ -7,6 +7,7 @@ interface ProductMappingDocument {
   externalProductId: string;
   shopifyProductId: string;
   productHandle: string;
+  productHash: string;
   lastUpdated: Date;
 }
 
@@ -47,6 +48,7 @@ class ProductMappingService {
       await this.productMappingCollection.createIndex({ externalProductId: 1 }, { unique: true });
       await this.productMappingCollection.createIndex({ shopifyProductId: 1 }, { unique: true });
       await this.productMappingCollection.createIndex({ productHandle: 1 }, { unique: true });
+      await this.productMappingCollection.createIndex({ productHash: 1 });
       
       this.initialized = true;
       console.log('Product Mapping MongoDB connection established successfully');
@@ -66,6 +68,19 @@ class ProductMappingService {
       return result?.shopifyProductId || null;
     } catch (error) {
       console.error(`Error getting Shopify product ID for external ID ${externalProductId}:`, error);
+      return null;
+    }
+  }
+
+  public async findProductByHash(productHash: string): Promise<ProductMappingDocument | null> {
+    if (!this.initialized || !this.productMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.productMappingCollection!.findOne({ productHash });
+    } catch (error) {
+      console.error(`Error finding product by hash ${productHash}:`, error);
       return null;
     }
   }

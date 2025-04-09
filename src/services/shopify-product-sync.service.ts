@@ -25,6 +25,7 @@ import { productMappingService } from './product-mapping.service';
 import { metaobjectMappingService } from './metaobject-mapping.service';
 import mongoDBService from './mongodb.service';
 import { generateFileHash, getMimeTypeFromUrl } from '../utils/file-hash.util';
+import crypto from 'crypto';
 
 // Load environment variables
 dotenv.config();
@@ -37,6 +38,83 @@ export class ShopifyProductSyncService {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'https://shopify-store-data-resolver.hieunguyen.dev';
     this.externalProductsApiUrl = `${externalApiBaseUrl}/api/products`;
+  }
+
+  // Generate a hash for a product based on its properties
+  private generateProductHash(product: ExternalProduct): string {
+    // Create a stable representation of variants
+    let variantsString = 'null';
+    if (product.variants && product.variants.length > 0) {
+      const sortedVariants = [...product.variants].sort((a, b) => {
+        if (a.sku !== b.sku) return a.sku.localeCompare(b.sku);
+        // Convert prices to numbers before comparing
+        const priceA = typeof a.price === 'string' ? parseFloat(a.price) : a.price;
+        const priceB = typeof b.price === 'string' ? parseFloat(b.price) : b.price;
+        return priceA - priceB;
+      });
+      
+      variantsString = sortedVariants.map(v => {
+        const optionsString = v.selectedOptions
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(o => `${o.name}:${o.value}`)
+          .join('|');
+        
+        return `${v.sku}|${v.price}|${v.compareAtPrice || ''}|${optionsString}`;
+      }).join(';');
+    }
+
+    // Create a stable representation of options
+    let optionsString = 'null';
+    if (product.options && product.options.length > 0) {
+      optionsString = product.options
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(o => {
+          const sortedValues = [...o.values].sort();
+          return `${o.name}:${sortedValues.join('|')}`;
+        })
+        .join(';');
+    }
+
+    // Create a stable representation of images
+    let imagesString = 'null';
+    if (product.images && product.images.length > 0) {
+      imagesString = product.images
+        .map(img => img.url)
+        .sort()
+        .join('|');
+    }
+
+    // Create a stable representation of metafields
+    let metafieldsString = 'null';
+    if (product.metafields && product.metafields.length > 0) {
+      metafieldsString = product.metafields
+        .sort((a, b) => {
+          if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
+          return a.key.localeCompare(b.key);
+        })
+        .map(m => `${m.namespace}:${m.key}:${m.value}`)
+        .join('|');
+    }
+
+    // Combine core product data and additional components
+    const productData = [
+      product.title,
+      product.handle,
+      product.descriptionHtml,
+      product.productType,
+      product.vendor,
+      product.tags.sort().join(','),
+      product.status,
+      product.templateSuffix,
+      product.seo?.title || '',
+      product.seo?.description || '',
+      variantsString,
+      optionsString,
+      imagesString,
+      metafieldsString
+    ].join('|');
+
+    return crypto.createHash('md5').update(productData).digest('hex');
   }
 
   // Fetch products from external API
@@ -910,7 +988,7 @@ export class ShopifyProductSyncService {
   }
 
   // Resolve and sync product to Shopify
-  async syncProduct(productData: MutationProductSetArgs) {
+  async syncProduct(productData: MutationProductSetArgs, externalProduct: ExternalProduct): Promise<any> {
     try {
       console.log(`🚀 Syncing product to Shopify: ${productData.input.title}`);    
       const response = await this.graphqlClient.request<{
@@ -933,12 +1011,15 @@ export class ShopifyProductSyncService {
         const productHandle = productData.input.handle || '';
         const shopifyProductId = result.product.id;
         
+        // Generate product hash
+        const productHash = this.generateProductHash(externalProduct);
+        
         // Map variant IDs
         const variantCount = productData.input.variants?.length || 0;
         await this.mapProductVariantIds(shopifyProductId, productHandle, variantCount);
         
         // Create product mapping between external API and Shopify
-        await this.createProductMapping(shopifyProductId, productHandle);
+        await this.createProductMapping(shopifyProductId, productHandle, productHash, externalProduct.id);
         
         // Publish the product
         const publishResult = await this.publishProduct(shopifyProductId);
@@ -955,36 +1036,25 @@ export class ShopifyProductSyncService {
   }
 
   // Create product mapping between external API and Shopify
-  private async createProductMapping(shopifyProductId: string, productHandle: string): Promise<void> {
+  private async createProductMapping(
+    shopifyProductId: string, 
+    productHandle: string, 
+    productHash: string, 
+    externalProductId: string
+  ): Promise<void> {
     try {
       // Initialize product mapping service
       await productMappingService.initialize();
       
-      // Check if mapping already exists for this product handle
-      const existingMapping = await productMappingService.getMappingByHandle(productHandle);
-      
-      if (existingMapping) {
-        console.log(`✅ Product mapping already exists for handle ${productHandle}. Skipping.`);
-        return;
-      }
-      
-      // Get external product data to create the mapping
-      const externalProducts = await this.fetchExternalProducts();
-      const externalProduct = externalProducts.find(p => p.handle === productHandle);
-      
-      if (!externalProduct) {
-        console.warn(`⚠️ Could not find external product with handle ${productHandle}`);
-        return;
-      }
-      
       // Create the product mapping
       await productMappingService.saveProductMapping({
-        externalProductId: externalProduct.id,
+        externalProductId,
         shopifyProductId,
-        productHandle
+        productHandle,
+        productHash
       });
       
-      console.log(`✅ Created product mapping for handle ${productHandle}`);
+      console.log(`✅ Created product mapping for handle ${productHandle} with hash ${productHash}`);
     } catch (error) {
       console.error('❌ Error creating product mapping:', error);
     }
@@ -1135,15 +1205,34 @@ export class ShopifyProductSyncService {
 
       // Sync each product
       const syncResults = [];
+      const skippedProducts = [];
+      
       for (const [index, product] of productsToSync.entries()) {
         console.log(`\n📍 Processing Product ${index + 1}/${productsToSync.length}`);
+        
         try {
+          // Generate hash for the current product
+          const productHash = this.generateProductHash(product);
+          
+          // Check if we already have this product with the same hash
+          const existingMapping = await productMappingService.getMappingByHandle(product.handle || '');
+          
+          if (existingMapping && existingMapping.productHash === productHash) {
+            console.log(`⏭️ Skipping product ${product.title} - no changes detected (hash: ${productHash})`);
+            skippedProducts.push(product);
+            continue;
+          } else if (existingMapping) {
+            console.log(`🔄 Product ${product.title} has changed - updating (old hash: ${existingMapping.productHash}, new hash: ${productHash})`);
+          } else {
+            console.log(`🆕 New product detected: ${product.title} (hash: ${productHash})`);
+          }
+          
+          // Proceed with syncing the product
           const preparedProductData = await this.prepareProductData(product);
-          const syncedProduct = await this.syncProduct(preparedProductData);
+          const syncedProduct = await this.syncProduct(preparedProductData, product);
           syncResults.push(syncedProduct);
         } catch (productSyncError) {
           console.error(`❌ Failed to sync product ${product.title}`, productSyncError);
-          // Optionally, you can choose to continue or break here
         }
       }
 
@@ -1151,7 +1240,8 @@ export class ShopifyProductSyncService {
       console.log(`\n🏁 Sync Complete
 - Total Products: ${productsToSync.length}
 - Successfully Synced: ${syncResults.length}
-- Failed Products: ${productsToSync.length - syncResults.length}
+- Skipped (No Changes): ${skippedProducts.length}
+- Failed Products: ${productsToSync.length - syncResults.length - skippedProducts.length}
 - Total Time: ${(endTime - startTime) / 1000} seconds`);
 
       return syncResults;
