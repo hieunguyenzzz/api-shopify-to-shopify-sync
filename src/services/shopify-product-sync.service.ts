@@ -242,6 +242,9 @@ export class ShopifyProductSyncService {
 
     // Add special product reference metafields that require ID mapping
     await this.addProductReferenceMetafields(productInput, externalProduct);
+    
+    // Add page reference metafields
+    await this.addPageReferenceMetafields(productInput, externalProduct);
   }
 
   // Add custom text-based metafields
@@ -1233,6 +1236,69 @@ export class ShopifyProductSyncService {
   // Get all variant ID mappings
   async getAllVariantMappings(): Promise<Record<string, any>> {
     return variantIdMappingService.getAllMappings();
+  }
+
+  // Add page reference metafields
+  private async addPageReferenceMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const pageReferenceMetafields = [
+      { namespace: 'custom', key: 'page360', type: 'page_reference' }
+    ];
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    // Import the page mapping service
+    const { pageMappingService } = await import('./page-mapping.service');
+
+    // Ensure page mapping service is initialized
+    await pageMappingService.initialize();
+
+    for (const metafield of pageReferenceMetafields) {
+      const metafieldData = externalProduct.metafields?.find(
+        m => m.namespace === metafield.namespace && m.key === metafield.key
+      );
+
+      if (metafieldData && metafieldData.value) {
+        try {
+          // Extract the ID from the gid://shopify/Page/1234567890 format
+          const numericId = metafieldData.value.match(/\/Page\/(\d+)$/)?.[1];
+          
+          // Try to find the mapping using the extracted ID
+          let shopifyPageId: string | null = null;
+          
+          if (numericId) {
+            // Look up the mapping in MongoDB using page ID
+            shopifyPageId = await pageMappingService.getShopifyPageId(numericId);
+          }
+          
+          // If not found by numeric ID, try the full ID format
+          if (!shopifyPageId) {
+            shopifyPageId = await pageMappingService.getShopifyPageId(metafieldData.value);
+          }
+          
+          // If still not found, try the ID without any formatting
+          if (!shopifyPageId) {
+            const plainId = metafieldData.value.replace(/^gid:\/\/shopify\/Page\//, '');
+            shopifyPageId = await pageMappingService.getShopifyPageId(plainId);
+          }
+          
+          if (shopifyPageId) {
+            productInput.metafields.push({
+              namespace: metafield.namespace,
+              key: metafield.key,
+              type: metafield.type,
+              value: shopifyPageId
+            });
+            console.log(`✅ Mapped page reference for ${metafield.namespace}.${metafield.key}: ${shopifyPageId}`);
+          } else {
+            console.warn(`⚠️ No mapping found for external page ID: ${metafieldData.value}`);
+          }
+        } catch (error) {
+          console.error(`❌ Error processing ${metafield.namespace}.${metafield.key} metafield:`, error);
+        }
+      }
+    }
   }
 }
 
