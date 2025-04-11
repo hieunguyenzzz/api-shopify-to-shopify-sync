@@ -368,4 +368,50 @@ export const COLLECTION_PUBLISH_MUTATION = `
   }
 `;
 
+export const URL_REDIRECT_CREATE_MUTATION = `
+  mutation urlRedirectCreate($urlRedirect: UrlRedirectInput!) {
+    urlRedirectCreate(urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECT_UPDATE_MUTATION = `
+  mutation urlRedirectUpdate($id: ID!, $urlRedirect: UrlRedirectInput!) {
+    urlRedirectUpdate(id: $id, urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECTS_QUERY = `
+  query getUrlRedirects($query: String, $first: Int) {
+    urlRedirects(query: $query, first: $first) {
+      edges {
+        node {
+          id
+          path
+          target
+        }
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 

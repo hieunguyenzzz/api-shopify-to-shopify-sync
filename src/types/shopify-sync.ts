@@ -72,3 +72,9 @@ export interface ExternalPage {
     originalValue?: string;
   }[];
 }
+
+export interface ExternalRedirect {
+  id: string;
+  path: string;
+  target: string;
+}
