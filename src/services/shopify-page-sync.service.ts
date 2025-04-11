@@ -10,6 +10,7 @@ import {
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { pageMappingService } from './page-mapping.service';
 import { metaobjectMappingService } from './metaobject-mapping.service';
+import crypto from 'crypto';
 
 // Custom error for missing mappings
 class MissingMetaobjectMappingError extends Error {
@@ -88,6 +89,32 @@ export class ShopifyPageSyncService {
     this.externalPagesApiUrl = `${externalApiBaseUrl}/api/pages`;
   }
 
+  // Generate a hash for a page based on its properties
+  private generatePageHash(page: ExternalPage): string {
+    // Create a stable representation of metafields
+    let metafieldsString = 'null';
+    if (page.metafields && page.metafields.length > 0) {
+      metafieldsString = page.metafields
+        .sort((a, b) => {
+          if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
+          return a.key.localeCompare(b.key);
+        })
+        .map(m => `${m.namespace}:${m.key}:${m.type}:${m.value}`)
+        .join('|');
+    }
+
+    // Combine core page data and metafields
+    const pageData = [
+      page.title,
+      page.handle,
+      page.bodyHtml,
+      page.templateSuffix || '',
+      metafieldsString
+    ].join('|');
+
+    return crypto.createHash('md5').update(pageData).digest('hex');
+  }
+
   // Fetch pages from external API
   async fetchExternalPages(): Promise<ExternalPage[]> {
     try {
@@ -138,7 +165,7 @@ export class ShopifyPageSyncService {
       console.log(`🔧 Preparing page data for sync: ${externalPage.title}`);
       
       const existingPage = await this.checkPageByHandle(externalPage.handle);
-      const processedBodyHtml = externalPage.bodyHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      const processedBodyHtml = externalPage.bodyHtml?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
       
       const processedMetafields = externalPage.metafields 
         ? await Promise.all(externalPage.metafields.map(async (metafield) => {
@@ -205,7 +232,7 @@ export class ShopifyPageSyncService {
   }
 
   // Create a new page
-  async createPage(pageData: { input: any, externalPageId: string }): Promise<ShopifyPage> {
+  async createPage(pageData: { input: any, externalPageId: string, pageHash: string }): Promise<ShopifyPage> {
     try {
       console.log(`🔧 Creating new page: ${pageData.input.title}`);
       
@@ -224,8 +251,8 @@ export class ShopifyPageSyncService {
       
       console.log(`✅ Successfully created page: ${pageData.input.title} (ID: ${pageId})`);
       
-      // Save mapping
-      await this.createPageMapping(pageData.externalPageId || pageData.input.handle, pageId, handle);
+      // Save mapping with hash
+      await this.createPageMapping(pageData.externalPageId || pageData.input.handle, pageId, handle, pageData.pageHash);
       
       return response.pageCreate.page;
     } catch (error) {
@@ -235,7 +262,7 @@ export class ShopifyPageSyncService {
   }
 
   // Update an existing page
-  async updatePage(pageData: { input: any }): Promise<ShopifyPage> {
+  async updatePage(pageData: { input: any, pageHash: string, externalPageId: string }): Promise<ShopifyPage> {
     try {
       console.log(`🔧 Updating page: ${pageData.input.title}`);
       
@@ -257,6 +284,9 @@ export class ShopifyPageSyncService {
       
       console.log(`✅ Successfully updated page: ${pageData.input.title}`);
       
+      // Update mapping with new hash
+      await this.updatePageMapping(pageData.externalPageId, id, response.pageUpdate.page.handle, pageData.pageHash);
+      
       return response.pageUpdate.page;
     } catch (error) {
       console.error('❌ Error updating page:', error);
@@ -268,6 +298,22 @@ export class ShopifyPageSyncService {
   async syncPage(externalPage: ExternalPage): Promise<ShopifyPage | null> {
     try {
       console.log(`🔄 Syncing page: ${externalPage.title}`);
+      
+      // Generate hash for current page
+      const pageHash = this.generatePageHash(externalPage);
+      
+      // Check if we already have this page with the same hash
+      await pageMappingService.initialize();
+      const existingMapping = await pageMappingService.getMappingByHandle(externalPage.handle);
+      
+      if (existingMapping && existingMapping.pageHash === pageHash) {
+        console.log(`⏭️ Skipping page ${externalPage.title} - no changes detected (hash: ${pageHash})`);
+        return null;
+      } else if (existingMapping) {
+        console.log(`🔄 Page ${externalPage.title} has changed - updating (old hash: ${existingMapping.pageHash}, new hash: ${pageHash})`);
+      } else {
+        console.log(`🆕 New page detected: ${externalPage.title} (hash: ${pageHash})`);
+      }
       
       const pageData = await this.preparePageData(externalPage);
       
@@ -286,20 +332,20 @@ export class ShopifyPageSyncService {
           input: {
             ...pageData.input,
             id: existingPage.id
-          }
+          },
+          pageHash,
+          externalPageId: externalPage.id
         });
       } else {
         // Store externalPageId in a separate variable since it's not part of the PageCreateInput
         const externalPageId = externalPage.id;
         result = await this.createPage({
           input: pageData.input,
-          externalPageId  // Pass this separately for mapping purposes
+          externalPageId,
+          pageHash
         });
       }
-      
-      // Check if mapping exists and create it if it doesn't
-      await this.ensurePageMapping(externalPage.id, result.id, result.handle);
-      
+            
       return result;
     } catch (error) {
       console.error(`❌ Error syncing page ${externalPage.title}:`, error);
@@ -307,57 +353,46 @@ export class ShopifyPageSyncService {
     }
   }
 
-  // Ensure mapping exists between external page ID and Shopify page ID
-  private async ensurePageMapping(externalPageId: string, shopifyPageId: string, pageHandle: string): Promise<void> {
-    try {
-      // Initialize the page mapping service
-      await pageMappingService.initialize();
-      
-      // Check if mapping already exists by external ID
-      const existingShopifyId = await pageMappingService.getShopifyPageId(externalPageId);
-      // Check if mapping already exists by handle
-      const existingHandleMapping = await pageMappingService.getMappingByHandle(pageHandle);
-      
-      if (!existingShopifyId && !existingHandleMapping) {
-        // Create new mapping if it doesn't exist
-        await this.createPageMapping(externalPageId, shopifyPageId, pageHandle);
-      } else if (existingShopifyId && existingShopifyId !== shopifyPageId) {
-        // Update mapping if the Shopify ID has changed
-        console.log(`ℹ️ Updating page mapping for external ID ${externalPageId}`);
-        await pageMappingService.savePageMapping({
-          externalPageId,
-          shopifyPageId,
-          pageHandle
-        });
-      } else if (existingHandleMapping && existingHandleMapping.externalPageId !== externalPageId) {
-        // Update mapping if the external ID has changed but handle remains the same
-        console.log(`ℹ️ Updating page mapping for handle ${pageHandle}`);
-        await pageMappingService.savePageMapping({
-          externalPageId,
-          shopifyPageId,
-          pageHandle
-        });
-      } else {
-        console.log(`✅ Page mapping already exists for ${pageHandle}`);
-      }
-    } catch (error) {
-      console.error(`❌ Error ensuring page mapping: ${error}`);
-      // Don't throw the error - just log it so sync can continue
-    }
-  }
-
   // Create mapping between external page ID and Shopify page ID
-  private async createPageMapping(externalPageId: string, shopifyPageId: string, pageHandle: string): Promise<void> {
+  private async createPageMapping(
+    externalPageId: string, 
+    shopifyPageId: string, 
+    pageHandle: string, 
+    pageHash: string
+  ): Promise<void> {
     try {
       await pageMappingService.savePageMapping({
         externalPageId,
         shopifyPageId,
-        pageHandle
+        pageHandle,
+        pageHash
       });
       
-      console.log(`✅ Successfully mapped external page ${externalPageId} to Shopify page ${shopifyPageId}`);
+      console.log(`✅ Successfully mapped external page ${externalPageId} to Shopify page ${shopifyPageId} with hash ${pageHash}`);
     } catch (error) {
       console.error(`❌ Error creating page mapping for ${externalPageId}:`, error);
+      throw error;
+    }
+  }
+
+  // Update existing page mapping with new hash
+  private async updatePageMapping(
+    externalPageId: string, 
+    shopifyPageId: string, 
+    pageHandle: string, 
+    pageHash: string
+  ): Promise<void> {
+    try {
+      await pageMappingService.savePageMapping({
+        externalPageId,
+        shopifyPageId,
+        pageHandle,
+        pageHash
+      });
+      
+      console.log(`✅ Successfully updated mapping for page ${pageHandle} with new hash ${pageHash}`);
+    } catch (error) {
+      console.error(`❌ Error updating page mapping for ${externalPageId}:`, error);
       throw error;
     }
   }
@@ -367,25 +402,42 @@ export class ShopifyPageSyncService {
     try {
       console.log('🔄 Starting page sync process...');
       
+      // Initialize mapping service
+      await pageMappingService.initialize();
+      
       const externalPages = await this.fetchExternalPages();
       const pagesToSync = limit ? externalPages.slice(0, limit) : externalPages;
       
       console.log(`🔄 Syncing ${pagesToSync.length} pages...`);
       
       const results = [];
+      const skippedByHash = [];
       
       for (const page of pagesToSync) {
         try {
           const result = await this.syncPage(page);
           
-          // Check if sync was skipped
+          // Check if sync was skipped due to unchanged hash
           if (result === null) {
-            results.push({
-              title: page.title,
-              handle: page.handle,
-              status: 'skipped',
-              reason: 'Missing metaobject mapping'
-            });
+            const pageHash = this.generatePageHash(page);
+            const existingMapping = await pageMappingService.getMappingByHandle(page.handle);
+            
+            if (existingMapping && existingMapping.pageHash === pageHash) {
+              skippedByHash.push(page);
+              results.push({
+                title: page.title,
+                handle: page.handle,
+                status: 'skipped',
+                reason: 'No changes detected (hash match)'
+              });
+            } else {
+              results.push({
+                title: page.title,
+                handle: page.handle,
+                status: 'skipped',
+                reason: 'Missing metaobject mapping'
+              });
+            }
           } else {
             results.push({
               title: page.title,
@@ -405,7 +457,7 @@ export class ShopifyPageSyncService {
         }
       }
       
-      console.log(`✅ Page sync completed. Success: ${results.filter(r => r.status === 'success').length}, Failed: ${results.filter(r => r.status === 'error').length}, Skipped: ${results.filter(r => r.status === 'skipped').length}`);
+      console.log(`✅ Page sync completed. Success: ${results.filter(r => r.status === 'success').length}, Failed: ${results.filter(r => r.status === 'error').length}, Skipped: ${results.filter(r => r.status === 'skipped').length} (${skippedByHash.length} due to no changes)`);
       
       return results;
     } catch (error) {

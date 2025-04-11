@@ -7,6 +7,7 @@ interface PageMappingDocument {
   externalPageId: string;
   shopifyPageId: string;
   pageHandle: string;
+  pageHash: string;
   lastUpdated: Date;
 }
 
@@ -47,6 +48,7 @@ class PageMappingService {
       await this.pageMappingCollection.createIndex({ externalPageId: 1 }, { unique: true });
       await this.pageMappingCollection.createIndex({ shopifyPageId: 1 }, { unique: true });
       await this.pageMappingCollection.createIndex({ pageHandle: 1 }, { unique: true });
+      await this.pageMappingCollection.createIndex({ pageHash: 1 });
       
       this.initialized = true;
       console.log('Page Mapping MongoDB connection established successfully');
@@ -66,6 +68,19 @@ class PageMappingService {
       return result?.shopifyPageId || null;
     } catch (error) {
       console.error(`Error getting Shopify page ID for external ID ${externalPageId}:`, error);
+      return null;
+    }
+  }
+
+  public async findPageByHash(pageHash: string): Promise<PageMappingDocument | null> {
+    if (!this.initialized || !this.pageMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.pageMappingCollection!.findOne({ pageHash });
+    } catch (error) {
+      console.error(`Error finding page by hash ${pageHash}:`, error);
       return null;
     }
   }
