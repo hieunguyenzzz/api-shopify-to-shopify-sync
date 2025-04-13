@@ -5,6 +5,7 @@ import syncMetaobjects from './api/sync-metaobjects';
 import syncFiles from './api/sync-files';
 import syncCollections from './api/sync-collections';
 import syncRedirects from './api/sync-redirects';
+import syncEverything from './api/sync-everything';
 import mongoDBService from './services/mongodb.service';
 import { variantIdMappingService } from './services/variant-id-mapping.service';
 import { pageMappingService } from './services/page-mapping.service';
@@ -62,6 +63,7 @@ app.get('/api/sync-metaobjects', syncMetaobjects);
 app.get('/api/sync-files', syncFiles);
 app.get('/api/sync-collections', syncCollections);
 app.get('/api/sync-redirects', syncRedirects);
+app.get('/api/sync-everything', syncEverything);
 
 // Backward compatibility route
 app.get('/api/sync-metaobject-faq', (req, res) => {
