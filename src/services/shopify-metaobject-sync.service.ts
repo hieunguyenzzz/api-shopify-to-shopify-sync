@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { GraphQLClient } from 'graphql-request';
+import crypto from 'crypto';
 import { ExternalMetaobject, ExternalMetaobjectsResponse } from '../types/metaobject.types';
 import { 
   METAOBJECT_CREATE_MUTATION,
@@ -75,6 +76,29 @@ export class ShopifyMetaobjectSyncService {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalMetaobjectsApiUrl = `${externalApiBaseUrl}/api/metaobjects`;
+  }
+
+  // Generate a hash for a metaobject based on its properties
+  private generateMetaobjectHash(metaobject: ExternalMetaobject): string {
+    // Use the target Shopify type if different from external type
+    const shopifyType = metaobject.type === 'meeting_rooms_features' 
+      ? 'product_rooms_features' 
+      : metaobject.type;
+
+    // Sort fields by key for stability
+    const sortedFields = [...metaobject.fields].sort((a, b) => 
+      a.key.localeCompare(b.key)
+    );
+
+    // Create a stable string representation of fields
+    const fieldsString = sortedFields
+      .map(field => `${field.key}|${field.type}|${JSON.stringify(field.value ?? "")}`) // Stringify value consistently
+      .join(';');
+
+    const metaobjectCoreData = `${metaobject.handle}|${shopifyType}`;
+    const metaobjectFullData = `${metaobjectCoreData}|${fieldsString}`;
+    
+    return crypto.createHash('md5').update(metaobjectFullData).digest('hex');
   }
 
   // Fetch metaobjects from external API
@@ -254,7 +278,7 @@ export class ShopifyMetaobjectSyncService {
   }
 
   // Create a new metaobject
-  async createMetaobject(metaobjectData: { input: any, externalMetaobjectId: string }): Promise<ShopifyMetaobject> {
+  async createMetaobject(metaobjectData: { input: any, externalMetaobjectId: string, metaobjectHash: string }): Promise<ShopifyMetaobject> {
     try {
       console.log(`🔧 Creating new metaobject: ${metaobjectData.input.handle}`);
       
@@ -274,12 +298,13 @@ export class ShopifyMetaobjectSyncService {
       
       console.log(`✅ Successfully created metaobject: ${handle} (ID: ${metaobjectId})`);
       
-      // Save mapping
+      // Save mapping, including the hash
       await this.createMetaobjectMapping(
         metaobjectData.externalMetaobjectId,
         metaobjectId,
         handle,
-        type
+        type, // Use the type returned by Shopify for mapping
+        metaobjectData.metaobjectHash // Pass the hash
       );
       
       return response.metaobjectCreate.metaobject;
@@ -317,38 +342,55 @@ export class ShopifyMetaobjectSyncService {
 
   // Sync a single metaobject
   async syncMetaobject(externalMetaobject: ExternalMetaobject): Promise<ShopifyMetaobject | null> {
+    // Generate hash from the raw external metaobject data
+    const metaobjectHash = this.generateMetaobjectHash(externalMetaobject);
+    console.log(`ℹ️ Generated hash for ${externalMetaobject.handle}: ${metaobjectHash}`);
+
     try {
-      // Prepare metaobject data
+      // --- Hash Check ---
+      // Assume metaobjectMappingService has a method to find by hash
+      // We need to ensure metaobjectMappingService is updated to handle this
+      const existingMappingByHash = await metaobjectMappingService.findMappingByHash(metaobjectHash); 
+      
+      if (existingMappingByHash) {
+          console.log(`✅ Skipping metaobject ${externalMetaobject.handle}: Hash ${metaobjectHash} already exists in mapping (Shopify ID: ${existingMappingByHash.shopifyMetaobjectId}).`);
+          // Optionally return the existing Shopify object if needed, or null to indicate no action taken
+          // For now, returning null as the primary goal is skipping redundant updates.
+          return null; 
+      }
+      console.log(`ℹ️ No existing mapping found for hash ${metaobjectHash}. Proceeding with sync...`);
+      // --- End Hash Check ---
+
+      // Prepare metaobject data (this checks Shopify by handle internally)
       const metaobjectData = await this.prepareMetaobjectData(externalMetaobject);
       
-      // Check if we already have a mapping for this metaobject
-      const existingMapping = await metaobjectMappingService.getMappingByHandle(externalMetaobject.handle);
+      // Check if we already have a mapping for this metaobject by handle
+      // Ensure getMappingByHandle also fetches hash if needed later
+      const existingMappingByHandle = await metaobjectMappingService.getMappingByHandle(externalMetaobject.handle);
       
-      if (metaobjectData.id || existingMapping) {
+      if (metaobjectData.id || existingMappingByHandle) {
         // Update existing metaobject
-        const shopifyId = metaobjectData.id || existingMapping?.shopifyMetaobjectId;
+        const shopifyId = metaobjectData.id || existingMappingByHandle?.shopifyMetaobjectId;
         
         if (!shopifyId) {
-          // This case might indicate an issue if prepareMetaobjectData didn't find an ID but a mapping exists?
-          // Or if the mapping exists but doesn't have the shopifyId - though prepareMetaobjectData should handle mapping lookup.
           console.warn(`⚠️ Potential inconsistency for ${externalMetaobject.handle}. Mapping exists but update ID not determined directly. Using mapping ID.`);
-          if (!existingMapping?.shopifyMetaobjectId) {
+          if (!existingMappingByHandle?.shopifyMetaobjectId) {
              throw new Error(`Cannot update metaobject: missing Shopify ID for ${externalMetaobject.handle} despite existing mapping.`);
           }
-          // Use the ID from the mapping if metaobjectData didn't provide one
-          const idToUse = metaobjectData.id || existingMapping.shopifyMetaobjectId;
+          const idToUse = existingMappingByHandle.shopifyMetaobjectId;
           
           const result = await this.updateMetaobject({
             id: idToUse,
             input: metaobjectData.input
           });
           
-          // Ensure mapping exists
+          // Ensure mapping exists, passing the NEW hash
           await this.ensureMetaobjectMapping(
             externalMetaobject.id,
             idToUse,
             externalMetaobject.handle,
-            externalMetaobject.type
+            externalMetaobject.type, // Use original type for mapping consistency
+            metaobjectHash // Pass the hash
           );
           
           return result;
@@ -360,79 +402,93 @@ export class ShopifyMetaobjectSyncService {
             input: metaobjectData.input
           });
           
-          // Ensure mapping exists
+          // Ensure mapping exists, passing the NEW hash
           await this.ensureMetaobjectMapping(
             externalMetaobject.id,
             shopifyId,
             externalMetaobject.handle,
-            externalMetaobject.type
+            externalMetaobject.type, // Use original type
+            metaobjectHash // Pass the hash
           );
           
           return result;
         }
       } else {
         // Create new metaobject
+        // Pass hash to createMetaobject to be saved in mapping
         return await this.createMetaobject({
           input: metaobjectData.input,
-          externalMetaobjectId: externalMetaobject.id
+          externalMetaobjectId: externalMetaobject.id,
+          metaobjectHash: metaobjectHash // Pass hash here
         });
       }
     } catch (error) {
-      // Catch the specific MappingNotFoundError to skip the item
       if (error instanceof MappingNotFoundError) {
         console.warn(`⏭️ Skipping metaobject ${externalMetaobject.handle}: ${error.message}`);
-        return null; // Indicate that sync was skipped
+        return null; 
       }
-      // Re-throw other errors
       console.error(`❌ Error syncing metaobject ${externalMetaobject.handle}:`, error);
-      throw error;
+      throw error; // Re-throw other errors
     }
   }
 
   // Ensure metaobject mapping exists
+  // Modify to accept hash
   private async ensureMetaobjectMapping(
     externalMetaobjectId: string,
     shopifyMetaobjectId: string,
     metaobjectHandle: string,
-    metaobjectType: string
+    metaobjectType: string, // This is the original external type
+    metaobjectHash: string // Add hash parameter
   ): Promise<void> {
     try {
-      // Check if we already have a mapping for this external ID
-      const existingMappingByExternalId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+      // Assume metaobjectMappingService has getMappingByExternalId that returns hash
+      const existingMappingByExternalId = await metaobjectMappingService.getMappingByExternalId(externalMetaobjectId); 
       
       if (existingMappingByExternalId) {
-        // Mapping already exists for this external ID, ensure it points to the correct Shopify ID
-        if (existingMappingByExternalId !== shopifyMetaobjectId) {
-          console.log(`🔄 Updating mapping for external ID ${externalMetaobjectId} to point to new Shopify ID ${shopifyMetaobjectId}`);
+        // Mapping already exists for this external ID. Update if Shopify ID or hash differs.
+        if (existingMappingByExternalId.shopifyMetaobjectId !== shopifyMetaobjectId || existingMappingByExternalId.metaobjectHash !== metaobjectHash) {
+          console.log(`🔄 Updating mapping for external ID ${externalMetaobjectId}. ShopifyID: ${shopifyMetaobjectId}, Hash: ${metaobjectHash}`);
+          // Assume saveMetaobjectMapping accepts hash
           await metaobjectMappingService.saveMetaobjectMapping({
             externalMetaobjectId,
             shopifyMetaobjectId,
             metaobjectHandle,
-            metaobjectType
+            metaobjectType, // Use original type passed in
+            metaobjectHash // Pass the hash
           });
+        } else {
+           console.log(`✅ Mapping for external ID ${externalMetaobjectId} is up-to-date.`);
         }
         return;
       }
       
-      // Check if we already have a mapping for this Shopify ID
+      // Check by handle only if not found by external ID (less common scenario for updates)
+      // Assume getMappingByHandle also returns hash
       const existingMappingByHandle = await metaobjectMappingService.getMappingByHandle(metaobjectHandle);
       
       if (existingMappingByHandle) {
-        // Mapping already exists for this handle, ensure it points to the correct external ID
-        if (existingMappingByHandle.externalMetaobjectId !== externalMetaobjectId) {
-          console.log(`🔄 Updating mapping for handle ${metaobjectHandle} to point to new external ID ${externalMetaobjectId}`);
+         // Mapping exists by handle, but not external ID. Update if external ID or hash differs.
+        if (existingMappingByHandle.externalMetaobjectId !== externalMetaobjectId || existingMappingByHandle.metaobjectHash !== metaobjectHash) {
+           console.log(`🔄 Updating mapping found by handle ${metaobjectHandle}. ExternalID: ${externalMetaobjectId}, ShopifyID: ${shopifyMetaobjectId}, Hash: ${metaobjectHash}`);
+          // Assume saveMetaobjectMapping accepts hash
           await metaobjectMappingService.saveMetaobjectMapping({
             externalMetaobjectId,
             shopifyMetaobjectId,
             metaobjectHandle,
-            metaobjectType
+            metaobjectType,
+            metaobjectHash // Pass the hash
           });
+        } else {
+             console.log(`✅ Mapping for handle ${metaobjectHandle} is up-to-date.`);
         }
         return;
       }
       
-      // No mapping exists, create a new one
-      await this.createMetaobjectMapping(externalMetaobjectId, shopifyMetaobjectId, metaobjectHandle, metaobjectType);
+      // No mapping exists by external ID or handle, create a new one
+      console.log(`📝 No existing mapping found for ${externalMetaobjectId} or ${metaobjectHandle}. Creating new mapping.`);
+      // Pass hash to create mapping
+      await this.createMetaobjectMapping(externalMetaobjectId, shopifyMetaobjectId, metaobjectHandle, metaobjectType, metaobjectHash);
     } catch (error) {
       console.error('❌ Error ensuring metaobject mapping:', error);
       throw error;
@@ -440,19 +496,23 @@ export class ShopifyMetaobjectSyncService {
   }
 
   // Create a new metaobject mapping
+  // Modify to accept hash
   private async createMetaobjectMapping(
     externalMetaobjectId: string,
     shopifyMetaobjectId: string,
     metaobjectHandle: string,
-    metaobjectType: string
+    metaobjectType: string, // This is the Shopify type from creation response
+    metaobjectHash: string // Add hash parameter
   ): Promise<void> {
     try {
-      console.log(`📝 Creating mapping for metaobject: ${metaobjectHandle}`);
+      console.log(`📝 Creating mapping for metaobject: ${metaobjectHandle} with Hash: ${metaobjectHash}`);
+      // Assume saveMetaobjectMapping now accepts metaobjectHash
       await metaobjectMappingService.saveMetaobjectMapping({
         externalMetaobjectId,
         shopifyMetaobjectId,
         metaobjectHandle,
-        metaobjectType
+        metaobjectType, // Use Shopify type here
+        metaobjectHash // Pass the hash
       });
     } catch (error) {
       console.error('❌ Error creating metaobject mapping:', error);

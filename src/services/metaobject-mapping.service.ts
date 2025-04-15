@@ -9,6 +9,8 @@ interface MetaobjectMappingDocument {
   metaobjectHandle: string;
   metaobjectType: string;
   lastUpdated: Date;
+  // Add the following line:
+  metaobjectHash?: string; 
 }
 
 class MetaobjectMappingService {
@@ -49,6 +51,7 @@ class MetaobjectMappingService {
       await this.metaobjectMappingCollection.createIndex({ shopifyMetaobjectId: 1 }, { unique: true });
       await this.metaobjectMappingCollection.createIndex({ metaobjectHandle: 1 }, { unique: true });
       await this.metaobjectMappingCollection.createIndex({ metaobjectType: 1 });
+      await this.metaobjectMappingCollection.createIndex({ metaobjectHash: 1 });
       
       this.initialized = true;
       console.log('Metaobject Mapping MongoDB connection established successfully');
@@ -132,6 +135,32 @@ class MetaobjectMappingService {
     } catch (error) {
       console.error(`Error getting metaobject mappings for type ${metaobjectType}:`, error);
       return [];
+    }
+  }
+
+  public async findMappingByHash(hash: string): Promise<MetaobjectMappingDocument | null> {
+    if (!this.initialized || !this.metaobjectMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.metaobjectMappingCollection!.findOne({ metaobjectHash: hash });
+    } catch (error) {
+      console.error(`Error finding metaobject mapping by hash ${hash}:`, error);
+      return null;
+    }
+  }
+
+  public async getMappingByExternalId(externalMetaobjectId: string): Promise<MetaobjectMappingDocument | null> {
+    if (!this.initialized || !this.metaobjectMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.metaobjectMappingCollection!.findOne({ externalMetaobjectId });
+    } catch (error) {
+      console.error(`Error getting metaobject mapping for external ID ${externalMetaobjectId}:`, error);
+      return null;
     }
   }
 
