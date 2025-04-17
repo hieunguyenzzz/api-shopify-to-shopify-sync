@@ -11,9 +11,9 @@ import {
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { metaobjectMappingService } from './metaobject-mapping.service';
 import MongoDBService from './mongodb.service';
-
 // Load environment variables
 dotenv.config();
+import { openAIService } from './openai.service';
 
 // Define response types
 interface ShopifyMetaobject {
@@ -394,12 +394,13 @@ export class ShopifyMetaobjectSyncService {
           );
           
           return result;
-
+          
         } else {
+          let rewriteContent = await openAIService.rewriteContent(JSON.stringify(metaobjectData.input));
            // Normal update path where ID was found by prepareMetaobjectData or consistent mapping
            const result = await this.updateMetaobject({
             id: shopifyId,
-            input: metaobjectData.input
+            input: JSON.parse(rewriteContent)
           });
           
           // Ensure mapping exists, passing the NEW hash
