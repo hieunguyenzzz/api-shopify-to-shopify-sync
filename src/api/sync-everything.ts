@@ -64,8 +64,8 @@ export const syncEverything = async (req: Request, res: Response) => {
     results.metaobjects = await syncAllMetaobjectTypes(limit);
     
     // Step 4: Sync pages
-    console.log('🔄 Starting sync-everything process: Step 4 - Pages');
-    results.pages = await shopifyPageSyncService.syncPages(limit);
+    // console.log('🔄 Starting sync-everything process: Step 4 - Pages');
+    // results.pages = await shopifyPageSyncService.syncPages(limit);
     
     // Step 5: Sync collections
     console.log('🔄 Starting sync-everything process: Step 5 - Collections');
