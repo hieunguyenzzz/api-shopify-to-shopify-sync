@@ -163,6 +163,28 @@ class MongoDBService {
     }
   }
 
+  public async deleteMappingByShopifyId(shopifyFileId: string): Promise<boolean> {
+    if (!this.initialized || !this.fileMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      console.log(`🗑️ Attempting to delete file mapping for Shopify ID: ${shopifyFileId}`);
+      const result = await this.fileMappingCollection!.deleteOne({ shopifyFileId });
+
+      if (result.deletedCount === 1) {
+        console.log(`✅ Successfully deleted mapping for Shopify ID: ${shopifyFileId}`);
+        return true;
+      } else {
+        console.warn(`⚠️ No mapping found or deleted for Shopify ID: ${shopifyFileId}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ Error deleting mapping for Shopify ID ${shopifyFileId}:`, error);
+      return false;
+    }
+  }
+
   public async close(): Promise<void> {
     if (this.client) {
       await this.client.close();

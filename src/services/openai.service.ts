@@ -29,8 +29,8 @@ class OpenAIService {
    */
   async rewriteContent(text: string, prompt?: string): Promise<string> {
     try {
-      // Default instruction includes note about preserving JSON structure
-      const defaultInstruction = 'Rewrite the following text. If the text contains JSON, preserve the exact JSON structure and only modify text content.';
+      // Default instruction includes note about preserving JSON structure and avoiding explanations
+      const defaultInstruction = 'Rewrite the following text with only slight changes to wording. If the text contains JSON, preserve the exact JSON structure and only modify text content minimally. Do not modify any URLs or Shopify IDs. Only provide the rewritten text without any additional explanations, comments, or formatting.';
       const instruction = prompt || defaultInstruction;
       
       const response = await this.client.chat.completions.create({

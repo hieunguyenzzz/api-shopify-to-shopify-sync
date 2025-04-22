@@ -1,6 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { GraphQLClient } from 'graphql-request';
+import { GraphQLClient, gql } from 'graphql-request';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { FILE_CREATE_MUTATION, STAGED_UPLOADS_CREATE_MUTATION } from '../graphql/shopify-mutations';
 import mongoDBService, { FileMappingDocument } from './mongodb.service';
@@ -65,6 +65,23 @@ interface StagedUploadResponse {
       message: string;
     }>;
   }
+}
+
+// Define type for the fetched Shopify File Node
+interface ShopifyFileNode {
+  id: string;
+  // Add other fields if needed later, for now just ID
+}
+
+// Define type for the GraphQL response for fetching files
+interface FetchFilesResponse {
+  files: {
+    pageInfo: {
+      hasNextPage: boolean;
+      endCursor: string | null;
+    };
+    nodes: ShopifyFileNode[];
+  };
 }
 
 class ShopifyFileSyncService {
@@ -441,6 +458,101 @@ class ShopifyFileSyncService {
     }
   }
 
+  // Fetch all file IDs from Shopify using GraphQL pagination
+  private async fetchAllShopifyFiles(): Promise<Set<string>> {
+    const query = gql`
+      query GetAllFiles($first: Int!, $after: String) {
+        files(first: $first, after: $after) { # Changed comment marker from // to #
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+          }
+        }
+      }
+    `;
+
+    const shopifyFileIds = new Set<string>();
+    try {
+      console.log('🚚 Fetching all file IDs from Shopify...');
+      
+      const batchSize = 250; // Max allowed by Shopify
+      let hasNextPage = true;
+      let after: string | null = null;
+      let totalFetched = 0;
+      
+      while (hasNextPage) {
+        const variables: { first: number; after: string | null } = {
+          first: batchSize,
+          after,
+        };
+
+        console.log(`   Fetching files batch after cursor: ${after || 'Start'} (Batch size: ${batchSize})`);
+        
+        const response: FetchFilesResponse = await this.graphqlClient.request<FetchFilesResponse>(query, variables);
+        
+        // Basic error check (GraphQL errors are usually thrown by the client)
+        if (!response || !response.files) {
+          throw new Error('Invalid response received from Shopify API when fetching files.');
+        }
+
+        const { files } = response;
+        files.nodes.forEach((node: ShopifyFileNode) => shopifyFileIds.add(node.id));
+        totalFetched += files.nodes.length;
+        
+        console.log(`   Fetched ${files.nodes.length} file IDs this batch, total now: ${totalFetched}`);
+
+        hasNextPage = files.pageInfo.hasNextPage;
+        after = files.pageInfo.endCursor;
+        
+        // Add a small delay between requests to avoid rate limiting
+        if (hasNextPage) {
+          await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        }
+      }
+      
+      console.log(`✅ Completed fetching all file IDs from Shopify. Total unique IDs: ${shopifyFileIds.size}`);
+      return shopifyFileIds;
+    } catch (error) {
+      console.error('❌ Error fetching file IDs from Shopify:', error);
+      // Depending on requirements, you might want to throw or return an empty set
+      // Returning an empty set means no cleanup happens, but sync might proceed with potentially stale data
+      // Throwing stops the whole sync process
+      throw new Error(`Failed to fetch all Shopify file IDs: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // Remove a stale mapping from the database and cache
+  private async removeStaleMapping(shopifyFileId: string, fileHash: string): Promise<boolean> {
+    try {
+      console.log(`🗑️ Found stale mapping for Shopify ID: ${shopifyFileId} (File Hash: ${fileHash}). Removing...`);
+      const deletedFromDB = await mongoDBService.deleteMappingByShopifyId(shopifyFileId);
+
+      if (deletedFromDB) {
+        // Also remove from cache if loaded
+        if (this.fileMappingsCache) {
+          this.fileMappingsCache.delete(fileHash);
+          console.log(`   Removed stale mapping from cache for File Hash: ${fileHash}`);
+        }
+        return true;
+      } else {
+        // Log if deletion failed but continue the process
+        console.warn(`   Failed to delete stale mapping from DB for Shopify ID: ${shopifyFileId}. It might have been deleted already.`);
+        // We might still want to remove from cache if it exists there
+        if (this.fileMappingsCache && this.fileMappingsCache.has(fileHash)) {
+            this.fileMappingsCache.delete(fileHash);
+            console.log(`   Removed potentially stale mapping from cache anyway for File Hash: ${fileHash}`);
+        }
+        return false; // Indicate DB deletion wasn't confirmed
+      }
+    } catch (error) {
+      console.error(`❌ Error removing stale mapping for Shopify ID ${shopifyFileId}:`, error);
+      return false;
+    }
+  }
+
   // Sync all files
   async syncFiles(limit?: number): Promise<ShopifyFile[]> {
     try {
@@ -448,36 +560,72 @@ class ShopifyFileSyncService {
       
       // Initialize MongoDB connection if not already initialized
       await mongoDBService.initialize();
+
+      // 1. Fetch all existing file IDs from Shopify
+      const existingShopifyFileIds = await this.fetchAllShopifyFiles();
       
-      // Load all file mappings up front
+      // 2. Load all local file mappings
       await this.loadFileMappings();
+
+      // 3. Validate local mappings against Shopify files and remove stale ones
+      if (this.fileMappingsCache) {
+        console.log(`🕵️ Validating ${this.fileMappingsCache.size} cached mappings against ${existingShopifyFileIds.size} Shopify files...`);
+        const staleMappingsToRemove: { shopifyFileId: string, fileHash: string }[] = [];
+
+        for (const mapping of this.fileMappingsCache.values()) {
+          if (!existingShopifyFileIds.has(mapping.shopifyFileId)) {
+            staleMappingsToRemove.push({ shopifyFileId: mapping.shopifyFileId, fileHash: mapping.fileHash });
+          }
+        }
+
+        if (staleMappingsToRemove.length > 0) {
+          console.log(`🗑️ Found ${staleMappingsToRemove.length} stale mappings to remove.`);
+          let removedCount = 0;
+          for (const staleMapping of staleMappingsToRemove) {
+             const removed = await this.removeStaleMapping(staleMapping.shopifyFileId, staleMapping.fileHash);
+             if(removed) removedCount++;
+          }
+           console.log(`✅ Finished cleaning stale mappings. Successfully removed: ${removedCount}/${staleMappingsToRemove.length}.`);
+        } else {
+          console.log('✅ No stale mappings found.');
+        }
+      } else {
+         console.warn("⚠️ File mappings cache not loaded, skipping stale mapping validation.");
+      }
       
-      // Fetch files from external API
+      // 4. Fetch files from external API
       const externalFiles = await this.fetchExternalFiles();
       
-      // Apply limit if specified
+      // Apply limit if specified (applied *after* validation, to potentially sync new files)
       const filesToSync = limit ? externalFiles.slice(0, limit) : externalFiles;
       
-      console.log(`🔄 Syncing ${filesToSync.length} files...`);
+      console.log(`🔄 Syncing up to ${filesToSync.length} files from external source...`);
       
       const syncedFiles: ShopifyFile[] = [];
+      let successfullySyncedCount = 0;
       
-      // Process files in sequence to avoid rate limiting
+      // 5. Process files for syncing (checks hash against potentially updated cache)
       for (const file of filesToSync) {
-        const success = await this.syncFile(file);
+        // syncFile already checks the hash against the cache
+        const success = await this.syncFile(file); 
         if (success) {
-          // Only add successfully synced files (including skipped ones, if 'true' is returned)
-          // Adjust logic here if skipped files shouldn't be in the final `syncedFiles` array
-          syncedFiles.push(file);
+          // This includes files that were skipped because they already existed *or* were successfully created/updated
+          syncedFiles.push(file); 
+          // Let's refine the success count to only include newly created/verified files, 
+          // assuming syncFile returns true even for skips. We need more info from syncFile if we want exact *newly created* count.
+          // For now, let's count all files that didn't error out during the sync process.
+          successfullySyncedCount++; 
         }
       }
       
-      console.log(`✅ Sync completed. Successfully processed ${syncedFiles.length} out of ${filesToSync.length} files.`);
+      console.log(`✅ Sync completed. Successfully processed ${successfullySyncedCount} out of ${filesToSync.length} external files attempted.`);
       
-      return syncedFiles;
+      return syncedFiles; // Return the list of files processed (successfully or skipped)
     } catch (error) {
-      console.error('❌ Error syncing files:', error);
-      throw error;
+      console.error('❌ Top-level error during syncFiles:', error);
+      // Depending on how fatal the error is, you might want to return empty array or re-throw
+      // Re-throwing indicates a failure in the overall process
+      throw error; 
     }
   }
 }

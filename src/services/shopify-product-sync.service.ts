@@ -270,7 +270,7 @@ export class ShopifyProductSyncService {
     const variantImagesMetafield = variant.metafields?.find(
       (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
     );
-    
+        
     if (variantImagesMetafield) {
       try {
         const mediaIds = await this.processImagesMetafield(variantImagesMetafield);
@@ -972,19 +972,57 @@ export class ShopifyProductSyncService {
     }
   }
 
-  // Process images metafield and upload files
-  private async processImagesMetafield(imagesMetafield: { value: string }): Promise<string[]> {
-    // Parse the image URLs from the metafield value
-    const imageUrls: string[] = JSON.parse(imagesMetafield.value);
-    
-    // Prepare file create inputs for upload
-    const fileInputs: FileCreateInput[] = imageUrls.map((url: string) => ({
-      originalSource: url,
-      contentType: FileContentType.Image
-    }));
+  // Process images metafield and look up file IDs from MongoDB mapping using external GIDs
+  private async processImagesMetafield(imagesMetafield: any): Promise<string[]> {
+    // Log the input metafield for debugging
+    console.log(`🔍 Processing images metafield for lookup: ${JSON.stringify(imagesMetafield)}`);
+    const shopifyFileIds: string[] = [];
 
-    // Upload multiple files and get their media IDs
-    return this.uploadMultipleFiles(fileInputs);
+    // Use originalValue, assuming it contains source store GIDs
+    if (!imagesMetafield || !imagesMetafield.originalValue) {
+      console.warn('⚠️ Images metafield is missing or has no originalValue. Cannot perform lookup.');
+      return [];
+    }
+
+    try {
+      // Parse the external media GIDs (source store GIDs) from the originalValue field
+      const externalMediaGids: string[] = JSON.parse(imagesMetafield.originalValue);
+      console.log(`Parsed ${externalMediaGids.length} external GIDs from originalValue.`);
+
+      // Ensure MongoDBService is initialized
+      await mongoDBService.initialize();
+
+      // Look up each external GID in the MongoDB mapping
+      for (const externalGid of externalMediaGids) {
+        if (!externalGid || typeof externalGid !== 'string') {
+          console.warn(`⚠️ Invalid external GID found: ${externalGid}. Skipping.`);
+          continue;
+        }
+        
+        // Use findFileByExternalId to find the mapping based on the source GID
+        console.log(`   Looking up external GID: ${externalGid}`);
+        const mapping = await mongoDBService.findFileByExternalId(externalGid);
+
+        if (mapping && mapping.shopifyFileId) {
+          shopifyFileIds.push(mapping.shopifyFileId);
+          console.log(`   ✅ Found mapping: ${externalGid} -> ${mapping.shopifyFileId}`);
+        } else {
+          console.warn(`   ⚠️ No file mapping found for external GID: ${externalGid}`);
+          // Do not upload - just report missing mapping
+        }
+      }
+
+      console.log(`✅ Finished lookup. Found ${shopifyFileIds.length}/${externalMediaGids.length} file IDs from mapping.`);
+      return shopifyFileIds;
+
+    } catch (error) {
+      console.error(`❌ Error processing images metafield lookup:`, error);
+      if (error instanceof SyntaxError) {
+          console.error(`   ⚠️ Check if originalValue is valid JSON: ${imagesMetafield.originalValue}`);
+      }
+      console.error(`   Metafield details: ${JSON.stringify(imagesMetafield)}`);
+      return []; // Return empty array on error
+    }
   }
 
   // Resolve and sync product to Shopify
@@ -1001,6 +1039,17 @@ export class ShopifyProductSyncService {
       const result = response.productSet;
 
       if (result.userErrors && result.userErrors.length > 0) {
+        // Iterate through errors to find and remove potentially invalid file mappings
+        for (const err of result.userErrors) {
+          const match = err.message.match(/Value references non-existent resource (gid:\\\/\\\/shopify\\\/MediaImage\\\/\d+)/);
+          if (match && match[1]) {
+            const invalidShopifyId = match[1];
+            console.warn(`Detected non-existent resource error for Shopify ID: ${invalidShopifyId}`);
+            // Attempt to remove the invalid mapping from MongoDB
+            await mongoDBService.deleteMappingByShopifyId(invalidShopifyId);
+          }
+        }
+        
         const errorMessage = result.userErrors.map((err: { message: string }) => err.message).join(', ');
         console.error(`❌ Sync error for product ${productData.input.title}: ${errorMessage}`);
         throw new Error(errorMessage);
