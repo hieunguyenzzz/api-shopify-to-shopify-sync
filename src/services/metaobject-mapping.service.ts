@@ -125,6 +125,19 @@ class MetaobjectMappingService {
     }
   }
 
+  public async getMappingByHandleAndType(metaobjectHandle: string, metaobjectType: string): Promise<MetaobjectMappingDocument | null> {
+    if (!this.initialized || !this.metaobjectMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.metaobjectMappingCollection!.findOne({ metaobjectHandle, metaobjectType });
+    } catch (error) {
+      console.error(`Error getting metaobject mapping for handle ${metaobjectHandle} and type ${metaobjectType}:`, error);
+      return null;
+    }
+  }
+
   public async getMappingsByType(metaobjectType: string): Promise<MetaobjectMappingDocument[]> {
     if (!this.initialized || !this.metaobjectMappingCollection) {
       await this.initialize();

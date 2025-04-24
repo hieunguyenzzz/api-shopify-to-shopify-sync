@@ -364,20 +364,27 @@ export class ShopifyMetaobjectSyncService {
       // Prepare metaobject data (this checks Shopify by handle internally)
       const metaobjectData = await this.prepareMetaobjectData(externalMetaobject);
       
-      // Check if we already have a mapping for this metaobject by handle
-      // Ensure getMappingByHandle also fetches hash if needed later
-      const existingMappingByHandle = await metaobjectMappingService.getMappingByHandle(externalMetaobject.handle);
+      // Check if we already have a mapping for this metaobject by handle and type
+      // This provides more precise mapping by considering both handle and original type
+      // Determine the target Shopify type for consistency
+      const shopifyType = externalMetaobject.type === 'meeting_rooms_features' 
+        ? 'product_rooms_features' 
+        : externalMetaobject.type;
+      const existingMappingByHandleAndType = await metaobjectMappingService.getMappingByHandleAndType(
+        externalMetaobject.handle,
+        shopifyType
+      );
       
-      if (metaobjectData.id || existingMappingByHandle) {
+      if (metaobjectData.id || existingMappingByHandleAndType) {
         // Update existing metaobject
-        const shopifyId = metaobjectData.id || existingMappingByHandle?.shopifyMetaobjectId;
+        const shopifyId = metaobjectData.id || existingMappingByHandleAndType?.shopifyMetaobjectId;
         
         if (!shopifyId) {
           console.warn(`⚠️ Potential inconsistency for ${externalMetaobject.handle}. Mapping exists but update ID not determined directly. Using mapping ID.`);
-          if (!existingMappingByHandle?.shopifyMetaobjectId) {
+          if (!existingMappingByHandleAndType?.shopifyMetaobjectId) {
              throw new Error(`Cannot update metaobject: missing Shopify ID for ${externalMetaobject.handle} despite existing mapping.`);
           }
-          const idToUse = existingMappingByHandle.shopifyMetaobjectId;
+          const idToUse = existingMappingByHandleAndType.shopifyMetaobjectId;
           
           const result = await this.updateMetaobject({
             id: idToUse,
@@ -389,7 +396,7 @@ export class ShopifyMetaobjectSyncService {
             externalMetaobject.id,
             idToUse,
             externalMetaobject.handle,
-            externalMetaobject.type, // Use original type for mapping consistency
+            shopifyType, // Use shopifyType for mapping consistency
             metaobjectHash // Pass the hash
           );
           
@@ -400,7 +407,7 @@ export class ShopifyMetaobjectSyncService {
            // Normal update path where ID was found by prepareMetaobjectData or consistent mapping
            const result = await this.updateMetaobject({
             id: shopifyId,
-            input: JSON.parse(rewriteContent)
+            input: metaobjectData.input
           });
           
           // Ensure mapping exists, passing the NEW hash
@@ -408,7 +415,7 @@ export class ShopifyMetaobjectSyncService {
             externalMetaobject.id,
             shopifyId,
             externalMetaobject.handle,
-            externalMetaobject.type, // Use original type
+            shopifyType, // Use shopifyType for mapping consistency
             metaobjectHash // Pass the hash
           );
           
@@ -466,7 +473,10 @@ export class ShopifyMetaobjectSyncService {
       
       // Check by handle only if not found by external ID (less common scenario for updates)
       // Assume getMappingByHandle also returns hash
-      const existingMappingByHandle = await metaobjectMappingService.getMappingByHandle(metaobjectHandle);
+      const existingMappingByHandle = await metaobjectMappingService.getMappingByHandleAndType(
+        metaobjectHandle,
+        metaobjectType
+      );
       
       if (existingMappingByHandle) {
          // Mapping exists by handle, but not external ID. Update if external ID or hash differs.
