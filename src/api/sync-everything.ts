@@ -70,16 +70,16 @@ export const syncEverything = async (req: Request, res: Response) => {
     // results.pages = await shopifyPageSyncService.syncPages(limit);
     
     // Step 5: Sync collections
-    console.log('🔄 Starting sync-everything process: Step 5 - Collections');
-    results.collections = await shopifyCollectionSyncService.syncCollections(limit);
+    // console.log('🔄 Starting sync-everything process: Step 5 - Collections');
+    // results.collections = await shopifyCollectionSyncService.syncCollections(limit);
     
     // Step 6: Sync products
     console.log('🔄 Starting sync-everything process: Step 6 - Products');
     results.products = await shopifyProductSyncService.syncProducts(limit);
     
     // Step 7: Sync price lists
-    console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
-    results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
+    // console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
+    // results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
     
     // Return success response with all results
     res.status(200).json({
