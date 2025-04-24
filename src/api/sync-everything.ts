@@ -5,7 +5,7 @@ import { shopifyMetaobjectSyncService } from '../services/shopify-metaobject-syn
 import { shopifyPageSyncService } from '../services/shopify-page-sync.service';
 import { shopifyCollectionSyncService } from '../services/shopify-collection-sync.service';
 import { shopifyProductSyncService } from '../services/shopify-product-sync.service';
-import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
+import { shopifyPriceListSyncService } from '../services/shopify-pricelist-sync.service';
 import { AxiosError } from 'axios';
 
 // Define valid metaobject types
@@ -19,6 +19,7 @@ interface SyncResults {
   pages: any[];
   collections: any[];
   products: any[];
+  priceLists: any[];
 }
 
 /**
@@ -48,7 +49,8 @@ export const syncEverything = async (req: Request, res: Response) => {
       metaobjects: {},
       pages: [],
       collections: [],
-      products: []
+      products: [],
+      priceLists: []
     };
     
     // Step 1: Sync files
@@ -74,6 +76,10 @@ export const syncEverything = async (req: Request, res: Response) => {
     // Step 6: Sync products
     console.log('🔄 Starting sync-everything process: Step 6 - Products');
     results.products = await shopifyProductSyncService.syncProducts(limit);
+    
+    // Step 7: Sync price lists
+    console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
+    results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
     
     // Return success response with all results
     res.status(200).json({

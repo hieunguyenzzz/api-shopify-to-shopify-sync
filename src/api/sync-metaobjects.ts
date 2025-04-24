@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { shopifyMetaobjectSyncService } from '../services/shopify-metaobject-sync.service';
 
 // Define valid metaobject types
-const validTypes = ['FAQs', 'room_features', 'company_logo', 'product_feature', 'meeting_rooms_features'];
+const validTypes = ['FAQs', 'room_features', 'company_logo', 'product_feature', 'meeting_rooms_features', 'acoustic_environment_next', 'environment_item'];
 
 /**
  * Syncs a single metaobject type

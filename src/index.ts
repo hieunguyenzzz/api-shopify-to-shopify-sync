@@ -5,12 +5,14 @@ import syncMetaobjects from './api/sync-metaobjects';
 import syncFiles from './api/sync-files';
 import syncCollections from './api/sync-collections';
 import syncRedirects from './api/sync-redirects';
+import syncPriceLists from './api/sync-pricelists';
 import syncEverything from './api/sync-everything';
 import mongoDBService from './services/mongodb.service';
 import { variantIdMappingService } from './services/variant-id-mapping.service';
 import { pageMappingService } from './services/page-mapping.service';
 import { metaobjectMappingService } from './services/metaobject-mapping.service';
 import { redirectMappingService } from './services/redirect-mapping.service';
+import { priceListMappingService } from './services/pricelist-mapping.service';
 import mongoDBCollectionService from './services/mongodb-collection.service';
 import dotenv from 'dotenv';
 
@@ -46,6 +48,10 @@ const PORT = process.env.PORT || 3000;
     // Initialize redirect mapping service
     await redirectMappingService.initialize();
     console.log('Redirect mapping MongoDB connection initialized successfully');
+    
+    // Initialize price list mapping service
+    await priceListMappingService.initialize();
+    console.log('Price list mapping MongoDB connection initialized successfully');
   } catch (error) {
     console.error('Failed to initialize MongoDB connections:', error);
     // Continue application startup even if MongoDB fails
@@ -63,6 +69,7 @@ app.get('/api/sync-metaobjects', syncMetaobjects);
 app.get('/api/sync-files', syncFiles);
 app.get('/api/sync-collections', syncCollections);
 app.get('/api/sync-redirects', syncRedirects);
+app.get('/api/sync-pricelists', syncPriceLists);
 app.get('/api/sync-everything', syncEverything);
 
 // Backward compatibility route
@@ -97,6 +104,9 @@ process.on('SIGINT', async () => {
     
     await redirectMappingService.close();
     console.log('Redirect mapping MongoDB connection closed');
+    
+    await priceListMappingService.close();
+    console.log('Price list mapping MongoDB connection closed');
   } catch (error) {
     console.error('Error closing MongoDB connections:', error);
   }

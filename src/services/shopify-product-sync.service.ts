@@ -317,6 +317,7 @@ export class ShopifyProductSyncService {
     await this.addFeatureContentMetaobjectReferences(productInput, externalProduct);
     await this.addProductRoomsFeaturesMetaobjectReference(productInput, externalProduct);
     await this.addCompanyLogoMetaobjectReferences(productInput, externalProduct);
+    await this.addAcousticEnvironmentMetaobjectReference(productInput, externalProduct);
 
     // Add special product reference metafields that require ID mapping
     await this.addProductReferenceMetafields(productInput, externalProduct);
@@ -901,6 +902,66 @@ export class ShopifyProductSyncService {
     }
   }
 
+  // Add acoustic environment metaobject reference metafield
+  private async addAcousticEnvironmentMetaobjectReference(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
+    const metafieldKey = 'acoustic_environment_next';
+    const namespace = 'custom';
+    
+    // Find the metafield
+    const metafieldData = externalProduct.metafields?.find(
+      m => m.namespace === namespace && m.key === metafieldKey
+    );
+
+    if (!metafieldData || !metafieldData.value) {
+      return; // Metafield not found or has no value
+    }
+
+    if (!productInput.metafields) {
+      productInput.metafields = [];
+    }
+
+    try {
+      const externalMetaobjectId = metafieldData.value;
+      
+      // Ensure metaobject mapping service is initialized
+      await metaobjectMappingService.initialize();
+      
+      // Map the external metaobject ID to Shopify metaobject ID
+      let shopifyMetaobjectId: string | null = null;
+      
+      // Extract the ID from the gid://shopify/Metaobject/1234567890 format
+      const numericId = externalMetaobjectId.match(/\/Metaobject\/(\d+)$/)?.[1];
+      
+      if (numericId) {
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(numericId);
+      }
+      
+      if (!shopifyMetaobjectId) {
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(externalMetaobjectId);
+      }
+      
+      if (!shopifyMetaobjectId) {
+        const plainId = externalMetaobjectId.replace(/^gid:\/\/shopify\/Metaobject\//, '');
+        shopifyMetaobjectId = await metaobjectMappingService.getShopifyMetaobjectId(plainId);
+      }
+        
+      if (shopifyMetaobjectId) {
+        productInput.metafields.push({
+          namespace: namespace,
+          key: metafieldKey,
+          type: 'metaobject_reference', // Single reference type
+          value: shopifyMetaobjectId
+        });
+        console.log(`✅ Mapped metaobject reference for ${namespace}.${metafieldKey}: ${shopifyMetaobjectId}`);
+      } else {
+        console.warn(`⚠️ No mapping found for external metaobject ID (${namespace}.${metafieldKey}): ${externalMetaobjectId}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error processing ${namespace}.${metafieldKey} metafield:`, error);
+    }
+  }
+
   // Add company logo metaobject reference metafields
   private async addCompanyLogoMetaobjectReferences(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const metafieldKey = 'company_logo';
@@ -975,7 +1036,7 @@ export class ShopifyProductSyncService {
   // Process images metafield and look up file IDs from MongoDB mapping using external GIDs
   private async processImagesMetafield(imagesMetafield: any): Promise<string[]> {
     // Log the input metafield for debugging
-    console.log(`🔍 Processing images metafield for lookup: ${JSON.stringify(imagesMetafield)}`);
+  
     const shopifyFileIds: string[] = [];
 
     // Use originalValue, assuming it contains source store GIDs
@@ -1158,8 +1219,10 @@ export class ShopifyProductSyncService {
         const externalVariant = externalProduct.variants?.find(v => v.sku === shopifyVariant.sku);
         
         if (externalVariant) {
+          // Use variant's unique identifier - in this case, we're using the product's external ID 
+          // combined with the SKU as there's no specific variant ID in the external system
           await this.trackSyncedVariant(
-            externalVariant.sku,
+            externalVariant.id,
             shopifyVariant.id,
             productHandle,
             shopifyVariant.sku
@@ -1257,6 +1320,7 @@ export class ShopifyProductSyncService {
       const skippedProducts = [];
       
       for (const [index, product] of productsToSync.entries()) {
+        
         console.log(`\n📍 Processing Product ${index + 1}/${productsToSync.length}`);
         
         try {

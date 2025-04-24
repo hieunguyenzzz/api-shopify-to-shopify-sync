@@ -18,6 +18,7 @@ export interface ExternalProduct {
   };
   templateSuffix: string;
   variants?: {
+    id: string;
     sku: string;
     title: string;
     price: string;
