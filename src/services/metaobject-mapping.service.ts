@@ -48,8 +48,7 @@ class MetaobjectMappingService {
       
       // Create indexes for faster lookups
       await this.metaobjectMappingCollection.createIndex({ externalMetaobjectId: 1 }, { unique: true });
-      await this.metaobjectMappingCollection.createIndex({ shopifyMetaobjectId: 1 }, { unique: true });
-      await this.metaobjectMappingCollection.createIndex({ metaobjectHandle: 1 }, { unique: true });
+      await this.metaobjectMappingCollection.createIndex({ shopifyMetaobjectId: 1 }, { unique: true });     
       await this.metaobjectMappingCollection.createIndex({ metaobjectType: 1 });
       await this.metaobjectMappingCollection.createIndex({ metaobjectHash: 1 });
       

@@ -96,6 +96,29 @@ export class ShopifyProductSyncService {
         .join('|');
     }
 
+    // Create a stable representation of variant metafields
+    let variantMetafieldsString = 'null';
+    if (product.variants && product.variants.length > 0) {
+      const variantsWithMetafields = product.variants.filter(v => v.metafields && v.metafields.length > 0);
+      
+      if (variantsWithMetafields.length > 0) {
+        variantMetafieldsString = variantsWithMetafields
+          .sort((a, b) => a.sku.localeCompare(b.sku))
+          .map(variant => {
+            const sortedMetafields = variant.metafields
+              .sort((a, b) => {
+                if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
+                return a.key.localeCompare(b.key);
+              })
+              .map(m => `${m.namespace}:${m.key}:${m.value}`)
+              .join('~');
+            
+            return `${variant.sku}:${sortedMetafields}`;
+          })
+          .join(';');
+      }
+    }
+
     // Combine core product data and additional components
     const productData = [
       product.title,
@@ -111,7 +134,8 @@ export class ShopifyProductSyncService {
       variantsString,
       optionsString,
       imagesString,
-      metafieldsString
+      metafieldsString,
+      variantMetafieldsString
     ].join('|');
 
     return crypto.createHash('md5').update(productData).digest('hex');
@@ -267,6 +291,7 @@ export class ShopifyProductSyncService {
 
   // Process variant metafields
   private async processVariantMetafields(variantData: ProductVariantSetInput, variant: any): Promise<void> {
+    // Process images metafield
     const variantImagesMetafield = variant.metafields?.find(
       (m: { namespace: string, key: string }) => m.namespace === 'global' && m.key === 'images'
     );
@@ -286,11 +311,160 @@ export class ShopifyProductSyncService {
           type: 'list.file_reference',
           value: JSON.stringify(mediaIds)
         });
-
-        //console.log(`📸 Uploaded ${mediaIds.length} images for variant ${variant.sku} global.images metafield`);
       } catch (error) {
         console.error(`❌ Error processing variant ${variant.sku} global.images metafield:`, error);
       }
+    }
+
+    // Initialize metafields array if needed
+    if (!variantData.metafields) {
+      variantData.metafields = [];
+    }
+
+    // Process simple string and number_decimal metafields
+    //await this.processSimpleVariantMetafields(variantData, variant);
+    
+    // Process bundle variant reference metafield
+    await this.processBundleVariantReference(variantData, variant);
+  }
+
+  // Process simple string and number_decimal metafields for variants
+  private async processSimpleVariantMetafields(variantData: ProductVariantSetInput, variant: any): Promise<void> {
+    if (!variant.metafields) return;
+
+    // Define supported metafields with their types
+    const simpleMetafields = [
+      { namespace: 'global', key: 'harmonized_system_code', type: 'string' },
+      { namespace: 'global', key: 'stock', type: 'number_decimal' },
+      // Delivery fee metafields for different regions
+      { namespace: 'global', key: 'delivery-fee-AT', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-BE', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-CH', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-DE', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-DK', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-ES', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-eur', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-FR', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-GB', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-gbp', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-IT', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-NL', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-NO', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-nok', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-PT', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-SE', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-sek', type: 'number_decimal' },
+      { namespace: 'global', key: 'delivery-fee-IE', type: 'number_decimal' }
+    ];
+
+    // Also detect any delivery-fee-* metafields dynamically
+    const deliveryFeeRegex = /^delivery-fee-/;
+    const dynamicDeliveryFees = variant.metafields
+      .filter((m: any) => m.namespace === 'global' && deliveryFeeRegex.test(m.key))
+      .map((m: any) => ({ namespace: 'global', key: m.key, type: 'number_decimal' }));
+
+    // Combine predefined and dynamically discovered metafields
+    const allMetafields = [...simpleMetafields, ...dynamicDeliveryFees];
+
+    // Process each metafield
+    for (const metafield of allMetafields) {
+      const metafieldData = variant.metafields.find(
+        (m: any) => m.namespace === metafield.namespace && m.key === metafield.key
+      );
+
+      if (metafieldData) {
+        if (!variantData.metafields) {
+          variantData.metafields = [];
+        }
+        
+        variantData.metafields.push({
+          namespace: metafield.namespace,
+          key: metafield.key,
+          type: metafield.type,
+          value: metafieldData.value
+        });
+      }
+    }
+  }
+
+  // Process bundle variant reference metafield
+  private async processBundleVariantReference(variantData: ProductVariantSetInput, variant: any): Promise<void> {
+    if (!variant.metafields) return;
+
+    // Find the bundle metafield
+    const bundleMetafield = variant.metafields.find(
+      (m: any) => m.namespace === 'custom' && m.key === 'bundle'
+    );
+
+    if (!bundleMetafield) return;
+
+    try {
+      // Parse the variant IDs from the metafield value
+      const externalVariantIds: string[] = JSON.parse(bundleMetafield.value);
+      
+      // Map the external variant IDs to Shopify variant IDs
+      const shopifyVariantIds: string[] = [];
+      
+      // Ensure variant ID mapping service is initialized
+      await variantIdMappingService.initialize();
+      
+      // For each external variant ID, find the corresponding Shopify variant ID
+      for (const externalVariantId of externalVariantIds) {
+        // Extract the ID from the gid://shopify/ProductVariant/1234567890 format
+        const numericId = externalVariantId.match(/\/ProductVariant\/(\d+)$/)?.[1];
+        
+        // Try to find the mapping using the extracted ID
+        let shopifyVariantId = null;
+        
+        if (numericId) {
+          // Look up the mapping in using variant ID
+          shopifyVariantId = await variantIdMappingService.getShopifyVariantId(numericId);
+        }
+        
+        // If not found by numeric ID, try the full ID format
+        if (!shopifyVariantId) {
+          // Try using the external ID (if service has a method to look up by external ID)
+          const mappings = await variantIdMappingService.getAllMappings();
+          const mapping = Object.values(mappings).find((m: any) => 
+            m.externalVariantId === externalVariantId);
+          
+          if (mapping) {
+            shopifyVariantId = mapping.shopifyVariantId;
+          }
+        }
+        
+        // If still not found, try the ID without any formatting
+        if (!shopifyVariantId) {
+          const plainId = externalVariantId.replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+          shopifyVariantId = await variantIdMappingService.getShopifyVariantId(plainId);
+        }
+        
+        if (shopifyVariantId) {
+          shopifyVariantIds.push(shopifyVariantId);
+        } else {
+          console.warn(`⚠️ No mapping found for external variant ID: ${externalVariantId}`);
+        }
+      }
+      
+      // Add the metafield with the mapped variant IDs if we found any
+      if (shopifyVariantIds.length > 0) {
+        if (!variantData.metafields) {
+          variantData.metafields = [];
+        }
+        
+        variantData.metafields.push({
+          namespace: 'custom',
+          key: 'bundle',
+          type: 'list.variant_reference',
+          value: JSON.stringify(shopifyVariantIds)
+        });
+        
+        console.log(`✅ Mapped ${shopifyVariantIds.length}/${externalVariantIds.length} variants for bundle metafield`);
+      } else {
+        console.warn(`⚠️ No variant mappings found for bundle metafield`);
+      }
+    } catch (error) {
+      console.error(`❌ Error processing bundle metafield:`, error);
     }
   }
 
