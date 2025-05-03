@@ -510,7 +510,8 @@ export class ShopifyProductSyncService {
       { namespace: 'custom', key: 'embed360url', type: 'single_line_text_field' },
       { namespace: 'custom', key: 'youtube_url', type: 'single_line_text_field' },
       { namespace: 'my_fields', key: 'dulux_suite', type: 'single_line_text_field' },
-      { namespace: 'my_fields', key: 'explore_page_url', type: 'url' }
+      { namespace: 'my_fields', key: 'explore_page_url', type: 'url' },
+      { namespace: 'custom', key: 'ticks_content', type: 'multi_line_text_field' }
     ];
 
     if (!productInput.metafields) {

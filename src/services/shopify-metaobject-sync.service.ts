@@ -407,7 +407,7 @@ export class ShopifyMetaobjectSyncService {
            // Normal update path where ID was found by prepareMetaobjectData or consistent mapping
            const result = await this.updateMetaobject({
             id: shopifyId,
-            input: metaobjectData.input
+            input: JSON.parse(rewriteContent)
           });
           
           // Ensure mapping exists, passing the NEW hash
