@@ -1,3 +1,5 @@
+import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
+
 export const PRODUCT_SET_MUTATION = `
   mutation productSet($input: ProductSetInput!, $synchronous: Boolean!) {
     productSet(input: $input, synchronous: $synchronous) {
@@ -22,22 +24,24 @@ export const PRODUCT_SET_MUTATION = `
   }
 `;
 
-
 export const PRODUCT_BY_HANDLE_QUERY = `
   query productByIdentifier($identifier: ProductIdentifierInput!) {
     productByIdentifier(identifier: $identifier) {
       id
-      handle
       title
-      variants(first: 50) {
-        edges {
-          node {
-            id
-            sku
-            title
-          }
-        }
-      }
+      handle
+      # Add other fields you might need
+    }
+  }
+`;
+
+export const PRODUCT_BY_ID_QUERY = `
+  query productById($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      handle
+      # Add other fields you might need
     }
   }
 `;

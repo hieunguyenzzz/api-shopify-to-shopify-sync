@@ -15,6 +15,7 @@ import { ExternalProduct } from '../types/shopify-sync';
 import { 
   PRODUCT_SET_MUTATION, 
   PRODUCT_BY_HANDLE_QUERY,
+  PRODUCT_BY_ID_QUERY,
   FILE_CREATE_MUTATION,
   PRODUCT_WITH_VARIANTS_QUERY,
   COLLECTION_PUBLISH_MUTATION
@@ -155,28 +156,47 @@ export class ShopifyProductSyncService {
   }
 
   // Check if product exists by handle
-  async checkProductByHandle(handle: string) {
+  async checkProductByShopifyId(productId: string): Promise<Product | null> {
     try {
-      console.log(`🔍 Checking for existing product with handle: ${handle}`);
+      console.log(`🔍 Checking for existing product with Shopify ID: ${productId}`);
       
       const response = await this.graphqlClient.request<{
-        productByIdentifier: Product
+        product: Product
       }>(
-        PRODUCT_BY_HANDLE_QUERY, 
-        { identifier: { handle } }
+        PRODUCT_BY_ID_QUERY, 
+        { id: productId }
       );
 
-      const existingProduct = response.productByIdentifier;
+      const existingProduct = response.product;
       
       if (existingProduct) {
         console.log(`✅ Found existing product: ${existingProduct.title} (ID: ${existingProduct.id})`);
         return existingProduct;
       }
       
-      console.log(`❌ No product found with handle: ${handle}`);
+      console.log(`❌ No product found with Shopify ID: ${productId}`);
       return null;
     } catch (error) {
-      console.error('❌ Error checking product by handle:', error);
+      console.error('❌ Error checking product by Shopify ID:', error);
+      throw error;
+    }
+  }
+
+  async checkProductByExternalId(externalProductId: string): Promise<Product | null> {
+    try {
+      console.log(`🗺️ Looking up Shopify ID for external product ID: ${externalProductId}`);
+      await productMappingService.initialize(); // Ensure service is initialized
+      const shopifyId = await productMappingService.getShopifyProductId(externalProductId);
+
+      if (shopifyId) {
+        console.log(`✅ Found mapping: External ID ${externalProductId} -> Shopify ID ${shopifyId}`);
+        return this.checkProductByShopifyId(shopifyId);
+      }
+      
+      console.log(`❌ No mapping found for external product ID: ${externalProductId}`);
+      return null;
+    } catch (error) {
+      console.error('❌ Error checking product by external ID:', error);
       throw error;
     }
   }
@@ -185,8 +205,8 @@ export class ShopifyProductSyncService {
   async prepareProductData(externalProduct: ExternalProduct): Promise<MutationProductSetArgs> {
     console.log(`🔧 Preparing product for sync: ${externalProduct.title}`);
     
-    // Check if product already exists
-    const existingProduct = await this.checkProductByHandle(externalProduct.handle || '');
+    // Check if product already exists using external ID
+    const existingProduct = await this.checkProductByExternalId(externalProduct.id);
     
     // Create base product input
     const productInput = this.createBaseProductInput(externalProduct, existingProduct);
@@ -1502,8 +1522,8 @@ export class ShopifyProductSyncService {
           // Generate hash for the current product
           const productHash = this.generateProductHash(product);
           
-          // Check if we already have this product with the same hash
-          const existingMapping = await productMappingService.getMappingByHandle(product.handle || '');
+          // Check if we already have this product with the same hash, using externalProductId
+          const existingMapping = await productMappingService.getMappingByExternalProductId(product.id);
           
           if (existingMapping && existingMapping.productHash === productHash) {
             console.log(`⏭️ Skipping product ${product.title} - no changes detected (hash: ${productHash})`);

@@ -135,6 +135,19 @@ class ProductMappingService {
     }
   }
 
+  public async getMappingByExternalProductId(externalProductId: string): Promise<ProductMappingDocument | null> {
+    if (!this.initialized || !this.productMappingCollection) {
+      await this.initialize();
+    }
+
+    try {
+      return await this.productMappingCollection!.findOne({ externalProductId });
+    } catch (error) {
+      console.error(`Error getting product mapping for external ID ${externalProductId}:`, error);
+      return null;
+    }
+  }
+
   public async close(): Promise<void> {
     if (this.client) {
       await this.client.close();
