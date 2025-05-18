@@ -14,7 +14,7 @@ import {
 import { ExternalProduct } from '../types/shopify-sync';
 import { 
   PRODUCT_SET_MUTATION, 
-  PRODUCT_BY_HANDLE_QUERY,
+  PRODUCT_BY_IDENTIFIER_QUERY,
   PRODUCT_BY_ID_QUERY,
   FILE_CREATE_MUTATION,
   PRODUCT_WITH_VARIANTS_QUERY,
@@ -27,6 +27,7 @@ import { metaobjectMappingService } from './metaobject-mapping.service';
 import mongoDBService from './mongodb.service';
 import { generateFileHash, getMimeTypeFromUrl } from '../utils/file-hash.util';
 import crypto from 'crypto';
+import { openAIService } from './openai.service';
 
 // Load environment variables
 dotenv.config();
@@ -156,6 +157,37 @@ export class ShopifyProductSyncService {
   }
 
   // Check if product exists by handle
+  async checkProductByHandle(handle: string): Promise<Product | null> {
+    try {
+      console.log(`🔍 Checking for existing product with handle: ${handle}`);
+      
+      const response = await this.graphqlClient.request<{
+        productByIdentifier: Product
+      }>(
+        PRODUCT_BY_IDENTIFIER_QUERY, 
+        { 
+          identifier: { 
+            handle 
+          }
+        }
+      );
+
+      const existingProduct = response.productByIdentifier;
+      
+      if (existingProduct) {
+        console.log(`✅ Found existing product by handle: ${existingProduct.title} (ID: ${existingProduct.id})`);
+        return existingProduct;
+      }
+      
+      console.log(`❌ No product found with handle: ${handle}`);
+      return null;
+    } catch (error) {
+      console.error('❌ Error checking product by handle:', error);
+      throw error;
+    }
+  }
+
+  // Check if product exists by handle
   async checkProductByShopifyId(productId: string): Promise<Product | null> {
     try {
       console.log(`🔍 Checking for existing product with Shopify ID: ${productId}`);
@@ -206,10 +238,16 @@ export class ShopifyProductSyncService {
     console.log(`🔧 Preparing product for sync: ${externalProduct.title}`);
     
     // Check if product already exists using external ID
-    const existingProduct = await this.checkProductByExternalId(externalProduct.id);
+    let existingProduct = await this.checkProductByExternalId(externalProduct.id);
+    
+    // If no product found by external ID, check by handle
+    if (!existingProduct && externalProduct.handle) {
+      console.log(`🔍 No product found by external ID, checking by handle: ${externalProduct.handle}`);
+      existingProduct = await this.checkProductByHandle(externalProduct.handle);
+    }
     
     // Create base product input
-    const productInput = this.createBaseProductInput(externalProduct, existingProduct);
+    const productInput = await this.createBaseProductInput(externalProduct, existingProduct);
     
     // Handle product images
     if (!existingProduct) {
@@ -234,19 +272,76 @@ export class ShopifyProductSyncService {
   }
 
   // Create base product input with core properties
-  private createBaseProductInput(externalProduct: ExternalProduct, existingProduct: Product | null): ProductSetInput {
+  private async createBaseProductInput(externalProduct: ExternalProduct, existingProduct: Product | null): Promise<ProductSetInput> {
+    console.log(`🔄 Preparing base product data for ${externalProduct.title}...`);
+    
+    // Process title with OpenAI
+    let title = externalProduct.title;
+    if (title && title.length > 0 && (title.includes('Soundbox') || title.includes('Kabine'))) {
+      try {
+        console.log(`🔄 Rewriting product title...`);
+        title = await openAIService.rewriteContent(title);
+        console.log(`✅ Successfully rewrote product title`);
+      } catch (error) {
+        console.error(`❌ Error rewriting product title:`, error);
+        // Fall back to manual replacement
+        title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design").replace(/Kabine/g, "Kozee");
+      }
+    }
+    
+    // Process description with OpenAI
+    let descriptionHtml = externalProduct.descriptionHtml;
+    if (descriptionHtml && descriptionHtml.length > 0) {
+      try {
+        console.log(`🔄 Rewriting product description...`);
+        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
+        descriptionHtml = await openAIService.rewriteContent(descriptionHtml, prompt);
+        console.log(`✅ Successfully rewrote product description`);
+      } catch (error) {
+        console.error(`❌ Error rewriting product description:`, error);
+        // Fall back to manual replacement
+        descriptionHtml = descriptionHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      }
+    }
+    
+    // Process SEO content with OpenAI
+    let seoTitle = externalProduct.seo?.title ?? '';
+    let seoDescription = externalProduct.seo?.description ?? '';
+    
+    if (seoTitle && seoTitle.length > 0) {
+      try {
+        console.log(`🔄 Rewriting SEO title...`);
+        seoTitle = await openAIService.rewriteContent(seoTitle);
+        console.log(`✅ Successfully rewrote SEO title`);
+      } catch (error) {
+        console.error(`❌ Error rewriting SEO title:`, error);
+        seoTitle = seoTitle.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      }
+    }
+    
+    if (seoDescription && seoDescription.length > 0) {
+      try {
+        console.log(`🔄 Rewriting SEO description...`);
+        seoDescription = await openAIService.rewriteContent(seoDescription);
+        console.log(`✅ Successfully rewrote SEO description`);
+      } catch (error) {
+        console.error(`❌ Error rewriting SEO description:`, error);
+        seoDescription = seoDescription.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      }
+    }
+
     const productInput: ProductSetInput = {
-      title: externalProduct.title,
+      title,
       handle: externalProduct.handle,
-      descriptionHtml: externalProduct.descriptionHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
+      descriptionHtml,
       productType: externalProduct.productType,
       vendor: externalProduct.vendor,
       tags: externalProduct.tags,
       status: externalProduct.status as ProductStatus,
       templateSuffix: externalProduct.templateSuffix,
       seo: {
-        title: externalProduct.seo?.title?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design") ?? '',
-        description: externalProduct.seo?.description?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design") ?? '',
+        title: seoTitle,
+        description: seoDescription,
       },
       productOptions: externalProduct.options?.map(option => ({
         name: option.name,
@@ -497,14 +592,14 @@ export class ShopifyProductSyncService {
     // Skip global.images metafield processing
     
     // Add custom metafields
-    this.addCustomTextMetafields(productInput, externalProduct);
-    this.addRichTextMetafields(productInput, externalProduct);
+    await this.addCustomTextMetafields(productInput, externalProduct);
+    await this.addRichTextMetafields(productInput, externalProduct);
     //this.addCustomNumberMetafields(productInput, externalProduct);
     await this.addCustomFileReferenceMetafields(productInput, externalProduct);
+    await this.addSprMetafields(productInput, externalProduct);
     this.addJudgemeMetafields(productInput, externalProduct);
-    this.addSprMetafields(productInput, externalProduct);
     this.addYoastSeoMetafields(productInput, externalProduct);
-    this.addGlobalMetafields(productInput, externalProduct);
+    await this.addGlobalMetafields(productInput, externalProduct);
     
     // Add special metaobject reference metafields that require ID mapping
     await this.addFaqMetaobjectReferences(productInput, externalProduct);
@@ -521,7 +616,7 @@ export class ShopifyProductSyncService {
   }
 
   // Add custom text-based metafields
-  private addCustomTextMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+  private async addCustomTextMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const textMetafields = [
       { namespace: 'custom', key: 'description', type: 'multi_line_text_field' },
       { namespace: 'custom', key: 'menu_subtitle', type: 'single_line_text_field' },
@@ -546,13 +641,29 @@ export class ShopifyProductSyncService {
       if (metafieldData) {
         let value = metafieldData.value;
         
-        // Replace Soundbox Store with Quell Design if present
-        if (typeof value === 'string' && value.includes('Soundbox Store')) {
-          value = value.replace('Soundbox Store', 'Quell Design').replace('Sound box Store', 'Quell Design');        
-        }
-
-        if (typeof value === 'string' && value.includes('soundboxstore.com')) {
-          value = value.replace('soundboxstore.com', 'quelldesign.com');
+        // Only rewrite content if it's a string and not a URL or embed URL
+        if (typeof value === 'string' && 
+            !metafield.key.includes('url') && 
+            !metafield.type.includes('url')) {
+          try {
+            console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
+            value = await openAIService.rewriteContent(value);
+            console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
+          } catch (error) {
+            console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
+            // Fall back to manual replacement if OpenAI fails
+            if (value.includes('Soundbox Store')) {
+              value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
+            }
+            if (value.includes('soundboxstore.com')) {
+              value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+            }
+          }
+        } else if (typeof value === 'string') {
+          // For URLs, just do simple replacement
+          if (value.includes('soundboxstore.com')) {
+            value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+          }
         }
         
         productInput.metafields.push({
@@ -566,7 +677,7 @@ export class ShopifyProductSyncService {
   }
 
   // Add rich text metafields
-  private addRichTextMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+  private async addRichTextMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const richTextMetafields = [
       { namespace: 'custom', key: 'additional_content', type: 'rich_text_field' },
       { namespace: 'custom', key: 'additional_heading', type: 'single_line_text_field' }
@@ -584,13 +695,23 @@ export class ShopifyProductSyncService {
       if (metafieldData) {
         let value = metafieldData.value;
         
-        // Replace Soundbox Store with Quell Design if present
-        if (typeof value === 'string' && value.includes('Soundbox Store')) {
-          value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');        
-        }
-
-        if (typeof value === 'string' && value.includes('soundboxstore.com')) {
-          value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+        if (typeof value === 'string') {
+          try {
+            console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
+            // Use a special prompt for rich text to preserve HTML structure
+            const prompt = 'Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.';
+            value = await openAIService.rewriteContent(value, prompt);
+            console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
+          } catch (error) {
+            console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
+            // Fall back to manual replacement if OpenAI fails
+            if (value.includes('Soundbox Store')) {
+              value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
+            }
+            if (value.includes('soundboxstore.com')) {
+              value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+            }
+          }
         }
         
         productInput.metafields.push({
@@ -700,7 +821,7 @@ export class ShopifyProductSyncService {
   }
 
   // Add SPR metafields
-  private addSprMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+  private async addSprMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const sprMetafields = [
       { namespace: 'spr', key: 'reviews', type: 'multi_line_text_field' }
     ];
@@ -717,9 +838,19 @@ export class ShopifyProductSyncService {
       if (metafieldData) {
         let value = metafieldData.value;
         
-        // Replace Soundbox Store with Quell Design if present
-        if (typeof value === 'string' && value.includes('Soundbox Store')) {
-          value = value.replace('Soundbox Store', 'Quell Design');
+        // Only process if it's a string with content
+        if (typeof value === 'string' && value.trim().length > 0) {
+          try {
+            console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
+            value = await openAIService.rewriteContent(value);
+            console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
+          } catch (error) {
+            console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
+            // Fall back to manual replacement if OpenAI fails
+            if (value.includes('Soundbox Store')) {
+              value = value.replace(/Soundbox Store/g, 'Quell Design');
+            }
+          }
         }
         
         productInput.metafields.push({
@@ -759,7 +890,7 @@ export class ShopifyProductSyncService {
   }
 
   // Add Global metafields
-  private addGlobalMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
+  private async addGlobalMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): Promise<void> {
     const globalMetafields = [
       { namespace: 'global', key: 'title_tag', type: 'multi_line_text_field' },
       { namespace: 'global', key: 'description_tag', type: 'string' }
@@ -777,9 +908,18 @@ export class ShopifyProductSyncService {
       if (metafieldData) {
         let value = metafieldData.value;
         
-        // Replace Soundbox Store with Quell Design if present
-        if (typeof value === 'string' && value.includes('Soundbox Store')) {
-          value = value.replace('Soundbox Store', 'Quell Design');
+        if (typeof value === 'string' && value.trim().length > 0) {
+          try {
+            console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
+            value = await openAIService.rewriteContent(value);
+            console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
+          } catch (error) {
+            console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
+            // Fall back to manual replacement if OpenAI fails
+            if (value.includes('Soundbox Store')) {
+              value = value.replace(/Soundbox Store/g, 'Quell Design');
+            }
+          }
         }
         
         productInput.metafields.push({
@@ -1285,6 +1425,10 @@ export class ShopifyProductSyncService {
   async syncProduct(productData: MutationProductSetArgs, externalProduct: ExternalProduct): Promise<any> {
     try {
       console.log(`🚀 Syncing product to Shopify: ${productData.input.title}`);    
+      if ( productData.input.title == 'Access Meeting Booth - Large') {
+        let a = 1
+      }
+
       const response = await this.graphqlClient.request<{
         productSet: ProductSetPayload
       }>(
@@ -1324,7 +1468,23 @@ export class ShopifyProductSyncService {
         await this.mapProductVariantIds(shopifyProductId, productHandle, variantCount);
         
         // Create product mapping between external API and Shopify
-        await this.createProductMapping(shopifyProductId, productHandle, productHash, externalProduct.id);
+        // Check if a mapping already exists with this external product ID
+        await productMappingService.initialize();
+        const existingMapping = await productMappingService.getMappingByExternalProductId(externalProduct.id);
+        
+        // If no mapping exists, create one (this handles both new products and products found by handle)
+        if (!existingMapping) {
+          await this.createProductMapping(shopifyProductId, productHandle, productHash, externalProduct.id);
+        } else {
+          // Update the existing mapping with the new hash
+          await productMappingService.saveProductMapping({
+            externalProductId: externalProduct.id,
+            shopifyProductId,
+            productHandle,
+            productHash
+          });
+          console.log(`✅ Updated product mapping for handle ${productHandle} with hash ${productHash}`);
+        }
         
         // Publish the product
         const publishResult = await this.publishProduct(shopifyProductId);

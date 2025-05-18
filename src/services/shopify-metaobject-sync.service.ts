@@ -126,6 +126,9 @@ export class ShopifyMetaobjectSyncService {
     try {
       console.log(`🔍 Checking for existing metaobject with handle: ${handle} and type: ${type}`);
       
+      if (handle === "kabine-how-does-kabine-ensure-a-quiet-workspace") {
+        console.log(`🔍 Checking for existing metaobject with handle: ${handle} and type: ${type}`);
+      }
       const response = await this.graphqlClient.request<MetaobjectsResponse>(
         METAOBJECTS_BY_TYPE_QUERY, 
         { 

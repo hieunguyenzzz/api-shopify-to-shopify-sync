@@ -24,7 +24,7 @@ export const PRODUCT_SET_MUTATION = `
   }
 `;
 
-export const PRODUCT_BY_HANDLE_QUERY = `
+export const PRODUCT_BY_IDENTIFIER_QUERY = `
   query productByIdentifier($identifier: ProductIdentifierInput!) {
     productByIdentifier(identifier: $identifier) {
       id
