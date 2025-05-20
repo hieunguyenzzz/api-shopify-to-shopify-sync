@@ -9,7 +9,7 @@ import { shopifyPriceListSyncService } from '../services/shopify-pricelist-sync.
 import { AxiosError } from 'axios';
 
 // Define valid metaobject types
-const validMetaobjectTypes = ['FAQs', 'room_features', 'company_logo', 'product_feature', 'meeting_rooms_features'];
+const validMetaobjectTypes = ['FAQs', 'room_features', 'company_logo', 'product_feature', 'meeting_rooms_features', 'environment_item', 'acoustic_environment_next'];
 
 // Define interface for sync results
 interface SyncResults {
