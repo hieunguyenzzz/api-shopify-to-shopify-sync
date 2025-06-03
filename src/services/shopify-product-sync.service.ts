@@ -727,7 +727,7 @@ export class ShopifyProductSyncService {
   // Add custom number metafields
   private addCustomNumberMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
     const numberMetafields = [
-      { namespace: 'custom', key: 'seats', type: 'number_integer' },
+      { namespace: 'custom', key: 'seats', type: 'single_line_text_field' },
       { namespace: 'seo', key: 'hidden', type: 'number_integer' }
     ];
 
