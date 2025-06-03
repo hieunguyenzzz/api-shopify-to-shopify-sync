@@ -594,7 +594,7 @@ export class ShopifyProductSyncService {
     // Add custom metafields
     await this.addCustomTextMetafields(productInput, externalProduct);
     await this.addRichTextMetafields(productInput, externalProduct);
-    //this.addCustomNumberMetafields(productInput, externalProduct);
+    this.addCustomNumberMetafields(productInput, externalProduct);
     await this.addCustomFileReferenceMetafields(productInput, externalProduct);
     await this.addSprMetafields(productInput, externalProduct);
     this.addJudgemeMetafields(productInput, externalProduct);
