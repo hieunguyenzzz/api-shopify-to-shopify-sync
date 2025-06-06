@@ -277,24 +277,38 @@ export class ShopifyProductSyncService {
     
     // Process title with OpenAI
     let title = externalProduct.title;
-    if (title && title.length > 0 && (title.includes('Soundbox') || title.includes('Kabine'))) {
-      try {
-        console.log(`🔄 Rewriting product title...`);
-        title = await openAIService.rewriteContent(title);
-        console.log(`✅ Successfully rewrote product title`);
-      } catch (error) {
-        console.error(`❌ Error rewriting product title:`, error);
-        // Fall back to manual replacement
-        title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design").replace(/Kabine/g, "Kozee");
+    if (title && title.length > 0) {
+      // Replace 'Coworker' with 'Quell+' (case insensitive)
+      if (title.match(/coworker/i)) {
+        title = title.replace(/coworker/gi, 'Quell+');
+        console.log(`✅ Replaced 'Coworker' with 'Quell+' in title`);
+      }
+
+      if (title.includes('Soundbox') || title.includes('Kabine')) {
+        try {
+          console.log(`🔄 Rewriting product title...`);
+          title = await openAIService.rewriteContent(title);
+          console.log(`✅ Successfully rewrote product title`);
+        } catch (error) {
+          console.error(`❌ Error rewriting product title:`, error);
+          // Fall back to manual replacement
+          title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design").replace(/Kabine/g, "Kozee");
+        }
       }
     }
     
     // Process description with OpenAI
     let descriptionHtml = externalProduct.descriptionHtml;
     if (descriptionHtml && descriptionHtml.length > 0) {
+      // Replace 'Coworker' with 'Quell+' (case insensitive)
+      if (descriptionHtml.match(/coworker/i)) {
+        descriptionHtml = descriptionHtml.replace(/coworker/gi, 'Quell+');
+        console.log(`✅ Replaced 'Coworker' with 'Quell+' in description`);
+      }
+
       try {
         console.log(`🔄 Rewriting product description...`);
-        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
+        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee", "Soundbox Store" with "Quell Design", and "Coworker" with "Quell+". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
         descriptionHtml = await openAIService.rewriteContent(descriptionHtml, prompt);
         console.log(`✅ Successfully rewrote product description`);
       } catch (error) {
@@ -700,7 +714,7 @@ export class ShopifyProductSyncService {
             console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
             // Use a special prompt for rich text to preserve HTML structure
             const prompt = 'Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.';
-            value = await openAIService.rewriteContent(value, prompt);
+            // value = await openAIService.rewriteContent(value, prompt);
             console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
           } catch (error) {
             console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
