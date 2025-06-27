@@ -1669,8 +1669,11 @@ export class ShopifyProductSyncService {
   }
 
   // Main sync method
-  async syncProducts(limit?: number) {
+  async syncProducts(limit?: number, force?: boolean) {
     console.log('🌟 Starting Shopify Product Sync Process');
+    if (force) {
+      console.log('🔥 Force mode enabled - skipping hash checks');
+    }
     const startTime = Date.now();
 
     try {
@@ -1697,16 +1700,21 @@ export class ShopifyProductSyncService {
           const productHash = this.generateProductHash(product);
           
           // Check if we already have this product with the same hash, using externalProductId
-          const existingMapping = await productMappingService.getMappingByExternalProductId(product.id);
-          
-          if (existingMapping && existingMapping.productHash === productHash) {
-            console.log(`⏭️ Skipping product ${product.title} - no changes detected (hash: ${productHash})`);
-            skippedProducts.push(product);
-            continue;
-          } else if (existingMapping) {
-            console.log(`🔄 Product ${product.title} has changed - updating (old hash: ${existingMapping.productHash}, new hash: ${productHash})`);
+          // Skip hash checking when force mode is enabled
+          if (!force) {
+            const existingMapping = await productMappingService.getMappingByExternalProductId(product.id);
+            
+            if (existingMapping && existingMapping.productHash === productHash) {
+              console.log(`⏭️ Skipping product ${product.title} - no changes detected (hash: ${productHash})`);
+              skippedProducts.push(product);
+              continue;
+            } else if (existingMapping) {
+              console.log(`🔄 Product ${product.title} has changed - updating (old hash: ${existingMapping.productHash}, new hash: ${productHash})`);
+            } else {
+              console.log(`🆕 New product detected: ${product.title} (hash: ${productHash})`);
+            }
           } else {
-            console.log(`🆕 New product detected: ${product.title} (hash: ${productHash})`);
+            console.log(`🔥 Force updating product: ${product.title} (hash: ${productHash})`);
           }
           
           // Proceed with syncing the product
@@ -1724,6 +1732,7 @@ export class ShopifyProductSyncService {
 - Successfully Synced: ${syncResults.length}
 - Skipped (No Changes): ${skippedProducts.length}
 - Failed Products: ${productsToSync.length - syncResults.length - skippedProducts.length}
+- Force Mode: ${force ? 'ON' : 'OFF'}
 - Total Time: ${(endTime - startTime) / 1000} seconds`);
 
       return syncResults;
