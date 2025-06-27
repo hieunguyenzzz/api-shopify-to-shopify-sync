@@ -656,29 +656,29 @@ export class ShopifyProductSyncService {
         let value = metafieldData.value;
         
         // Only rewrite content if it's a string and not a URL or embed URL
-        // if (typeof value === 'string' && 
-        //     !metafield.key.includes('url') && 
-        //     !metafield.type.includes('url')) {
-        //   try {
-        //     console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
-        //     value = await openAIService.rewriteContent(value);
-        //     console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
-        //   } catch (error) {
-        //     console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
-        //     // Fall back to manual replacement if OpenAI fails
-        //     if (value.includes('Soundbox Store')) {
-        //       value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
-        //     }
-        //     if (value.includes('soundboxstore.com')) {
-        //       value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
-        //     }
-        //   }
-        // } else if (typeof value === 'string') {
-        //   // For URLs, just do simple replacement
-        //   if (value.includes('soundboxstore.com')) {
-        //     value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
-        //   }
-        // }
+        if (typeof value === 'string' && 
+            !metafield.key.includes('url') && 
+            !metafield.type.includes('url')) {
+          // try {
+          //   console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
+          //   value = await openAIService.rewriteContent(value);
+          //   console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
+          // } catch (error) {
+            // console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
+            // Fall back to manual replacement if OpenAI fails
+            if (value.includes('Soundbox Store')) {
+              value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
+            }
+            if (value.includes('soundboxstore.com')) {
+              value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+            }
+          // }
+        } else if (typeof value === 'string') {
+          // For URLs, just do simple replacement
+          if (value.includes('soundboxstore.com')) {
+            value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
+          }
+        }
         
         productInput.metafields.push({
           namespace: metafield.namespace,
