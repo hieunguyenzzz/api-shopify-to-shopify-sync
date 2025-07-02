@@ -292,7 +292,7 @@ export class ShopifyProductSyncService {
         } catch (error) {
           console.error(`❌ Error rewriting product title:`, error);
           // Fall back to manual replacement
-          title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design").replace(/Kabine/g, "Kozee");
+          title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
         }
       }
     }
@@ -308,7 +308,7 @@ export class ShopifyProductSyncService {
 
       try {
         console.log(`🔄 Rewriting product description...`);
-        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee", "Soundbox Store" with "Quell Design", and "Coworker" with "Quell+". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
+        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "Quell Design", and "Coworker" with "Quell+". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
         descriptionHtml = await openAIService.rewriteContent(descriptionHtml, prompt);
         console.log(`✅ Successfully rewrote product description`);
       } catch (error) {
@@ -713,7 +713,7 @@ export class ShopifyProductSyncService {
           try {
             console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
             // Use a special prompt for rich text to preserve HTML structure
-            const prompt = 'Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.';
+            const prompt = 'Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "Quell Design". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.';
             // value = await openAIService.rewriteContent(value, prompt);
             console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
           } catch (error) {

@@ -32,7 +32,7 @@ class OpenAIService {
   async rewriteContent(text: string, prompt?: string): Promise<string> {
     try {
       // Default instruction includes note about preserving JSON structure and avoiding explanations
-      const defaultInstruction = 'Rewrite the following text with only some changes to wording to make it difference but still keep the same meaning. Replace any occurrence of "Kabine" with "Kozee" and "Soundbox Store" with "Quell Design". If the text contains JSON, preserve the exact JSON structure and only modify text content minimally. Do not modify any URLs or Shopify IDs. Only provide the rewritten text without any additional explanations, comments, or formatting.';
+      const defaultInstruction = 'Rewrite the following text with only some changes to wording to make it difference but still keep the same meaning. Replace any occurrence of "Soundbox Store" with "Quell Design". If the text contains JSON, preserve the exact JSON structure and only modify text content minimally. Do not modify any URLs or Shopify IDs. Only provide the rewritten text without any additional explanations, comments, or formatting.';
       const instruction = prompt || defaultInstruction;
 
       // Create a cache key based on the text and instruction
