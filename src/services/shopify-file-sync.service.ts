@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import FormData from 'form-data';
+import { rateLimiter } from '../utils/rate-limiter';
 
 // Load environment variables
 dotenv.config();
@@ -88,11 +89,67 @@ class ShopifyFileSyncService {
   private graphqlClient: GraphQLClient;
   private externalFilesApiUrl: string;
   private fileMappingsCache: Map<string, FileMappingDocument> | null = null;
+  private maxRetries: number;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalFilesApiUrl = `${externalApiBaseUrl}/api/files`;
+    this.maxRetries = parseInt(process.env.SHOPIFY_MAX_RETRIES || '3', 10);
+  }
+
+  /**
+   * Execute GraphQL request with rate limiting and retry logic
+   */
+  private async executeWithRetry<T>(
+    mutation: any,
+    variables: any,
+    operationName: string,
+    retryCount: number = 0
+  ): Promise<T> {
+    try {
+      // Wait for rate limiter before making request
+      await rateLimiter.waitIfNeeded();
+
+      // Execute the GraphQL request
+      const response = await this.graphqlClient.request<T>(mutation, variables);
+      return response;
+    } catch (error: any) {
+      // Check if it's a throttle error
+      if (rateLimiter.isThrottleError(error)) {
+        console.warn(`⚠️ Throttled on ${operationName} (attempt ${retryCount + 1}/${this.maxRetries + 1})`);
+
+        // If we haven't exceeded max retries, wait and retry
+        if (retryCount < this.maxRetries) {
+          const throttleStatus = rateLimiter.extractThrottleStatus(error);
+
+          let waitTime: number;
+          if (throttleStatus) {
+            // Calculate wait time based on Shopify's throttle status
+            waitTime = rateLimiter.calculateBackoffTime(
+              throttleStatus.currentlyAvailable,
+              throttleStatus.requestCost,
+              throttleStatus.restoreRate
+            );
+            console.log(`⏳ Waiting ${waitTime}ms for rate limit to restore (${throttleStatus.currentlyAvailable}/${throttleStatus.requestCost} points available)`);
+          } else {
+            // Use exponential backoff if we can't extract throttle status
+            waitTime = rateLimiter.calculateExponentialBackoff(retryCount);
+            console.log(`⏳ Using exponential backoff: waiting ${waitTime}ms before retry`);
+          }
+
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+
+          // Retry the request
+          return this.executeWithRetry<T>(mutation, variables, operationName, retryCount + 1);
+        }
+      }
+
+      // If not a throttle error or max retries exceeded, throw the error
+      console.error(`❌ GraphQL Error ${operationName}:`, error);
+      throw error;
+    }
   }
 
   // Load all file mappings from MongoDB
@@ -360,34 +417,35 @@ class ShopifyFileSyncService {
         }
         
         try {
-          const response = await this.graphqlClient.request<FileCreateResponse>(
+          const response = await this.executeWithRetry<FileCreateResponse>(
             FILE_CREATE_MUTATION,
-            { files: [fileInput] }
+            { files: [fileInput] },
+            `creating video file ${file.filename}`
           );
-          
+
           if (response.fileCreate.userErrors && response.fileCreate.userErrors.length > 0) {
             console.error(`❌ Shopify API Error creating video file ${file.filename}:`, response.fileCreate.userErrors);
             return false;
           }
-          
+
           if (!response.fileCreate.files || response.fileCreate.files.length === 0) {
             console.error(`❌ Shopify API did not return file data for video ${file.filename}`);
             return false;
           }
-          
+
           const createdShopifyFile = response.fileCreate.files[0];
-          
+
           if (!createdShopifyFile || !createdShopifyFile.id) {
             console.error(`❌ Shopify API returned invalid file data for video ${file.filename}`);
             return false;
           }
-          
+
           const newShopifyFileId = createdShopifyFile.id;
           console.log(`✅ Successfully created video file in Shopify: ${file.filename} (ID: ${newShopifyFileId})`);
-          
+
           // Store the mapping
           await this.createFileMapping(fileHash, newShopifyFileId, file.id, file.url, file.mimeType);
-          
+
           return true;
         } catch (gqlError) {
           console.error(`❌ GraphQL Error creating video file ${file.filename} in Shopify:`, gqlError);
@@ -417,9 +475,10 @@ class ShopifyFileSyncService {
       }
 
       try {
-        const response = await this.graphqlClient.request<FileCreateResponse>(
+        const response = await this.executeWithRetry<FileCreateResponse>(
           FILE_CREATE_MUTATION,
-          { files: [fileInput] }
+          { files: [fileInput] },
+          `creating file ${file.filename}`
         );
 
         if (response.fileCreate.userErrors && response.fileCreate.userErrors.length > 0) {
@@ -430,7 +489,7 @@ class ShopifyFileSyncService {
         // Check if files array exists and has elements
         if (!response.fileCreate.files || response.fileCreate.files.length === 0) {
           console.error(`❌ Shopify API did not return file data for ${file.filename}`);
-          return false; 
+          return false;
         }
 
         const createdShopifyFile = response.fileCreate.files[0];

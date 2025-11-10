@@ -66,20 +66,20 @@ export const syncEverything = async (req: Request, res: Response) => {
     results.metaobjects = await syncAllMetaobjectTypes(limit);
     
     // Step 4: Sync pages
-    // console.log('🔄 Starting sync-everything process: Step 4 - Pages');
-    // results.pages = await shopifyPageSyncService.syncPages(limit);
+    console.log('🔄 Starting sync-everything process: Step 4 - Pages');
+    results.pages = await shopifyPageSyncService.syncPages(limit);
     
     // Step 5: Sync collections
-    // console.log('🔄 Starting sync-everything process: Step 5 - Collections');
-    // results.collections = await shopifyCollectionSyncService.syncCollections(limit);
+    console.log('🔄 Starting sync-everything process: Step 5 - Collections');
+    results.collections = await shopifyCollectionSyncService.syncCollections(limit);
     
     // Step 6: Sync products
     console.log('🔄 Starting sync-everything process: Step 6 - Products');
     results.products = await shopifyProductSyncService.syncProducts(limit);
     
     // Step 7: Sync price lists
-    // console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
-    // results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
+    console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
+    results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
     
     // Return success response with all results
     res.status(200).json({

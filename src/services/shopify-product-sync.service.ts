@@ -35,11 +35,22 @@ dotenv.config();
 export class ShopifyProductSyncService {
   private graphqlClient: GraphQLClient;
   private externalProductsApiUrl: string;
+  private targetSiteTitle: string;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'https://shopify-store-data-resolver.hieunguyen.dev';
     this.externalProductsApiUrl = `${externalApiBaseUrl}/api/products`;
+    this.targetSiteTitle = process.env.TARGET_SITE_TITLE || 'Target Site';
+  }
+
+  /**
+   * Replace source site names with target site name
+   */
+  private replaceSourceSiteNames(text: string): string {
+    return text
+      .replace(/Soundbox Store/g, this.targetSiteTitle)
+      .replace(/Sound box Store/g, this.targetSiteTitle);
   }
 
   // Generate a hash for a product based on its properties
@@ -292,7 +303,7 @@ export class ShopifyProductSyncService {
         } catch (error) {
           console.error(`❌ Error rewriting product title:`, error);
           // Fall back to manual replacement
-          title = title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+          title = this.replaceSourceSiteNames(title);
         }
       }
     }
@@ -308,13 +319,13 @@ export class ShopifyProductSyncService {
 
       try {
         console.log(`🔄 Rewriting product description...`);
-        const prompt = 'Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "Quell Design", and "Coworker" with "Quell+". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.';
+        const prompt = `Rewrite the following HTML product description with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "${this.targetSiteTitle}", and "Coworker" with "Quell+". Do not modify any URLs, IDs, or product specifications. Only provide the rewritten text without any explanations.`;
         descriptionHtml = await openAIService.rewriteContent(descriptionHtml, prompt);
         console.log(`✅ Successfully rewrote product description`);
       } catch (error) {
         console.error(`❌ Error rewriting product description:`, error);
         // Fall back to manual replacement
-        descriptionHtml = descriptionHtml.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+        descriptionHtml = this.replaceSourceSiteNames(descriptionHtml);
       }
     }
     
@@ -329,7 +340,7 @@ export class ShopifyProductSyncService {
         console.log(`✅ Successfully rewrote SEO title`);
       } catch (error) {
         console.error(`❌ Error rewriting SEO title:`, error);
-        seoTitle = seoTitle.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+        seoTitle = this.replaceSourceSiteNames(seoTitle);
       }
     }
     
@@ -340,7 +351,7 @@ export class ShopifyProductSyncService {
         console.log(`✅ Successfully rewrote SEO description`);
       } catch (error) {
         console.error(`❌ Error rewriting SEO description:`, error);
-        seoDescription = seoDescription.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+        seoDescription = this.replaceSourceSiteNames(seoDescription);
       }
     }
 
@@ -667,7 +678,7 @@ export class ShopifyProductSyncService {
             // console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
             // Fall back to manual replacement if OpenAI fails
             if (value.includes('Soundbox Store')) {
-              value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
+              value = this.replaceSourceSiteNames(value);
             }
             if (value.includes('soundboxstore.com')) {
               value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
@@ -713,14 +724,14 @@ export class ShopifyProductSyncService {
           try {
             console.log(`🔄 Rewriting content for ${metafield.namespace}.${metafield.key}...`);
             // Use a special prompt for rich text to preserve HTML structure
-            const prompt = 'Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "Quell Design". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.';
+            const prompt = `Rewrite the following HTML/rich text content with some changes to wording while preserving all HTML tags and structure exactly. Replace any occurrence of "Soundbox Store" with "${this.targetSiteTitle}". Do not modify any URLs or IDs. Only provide the rewritten text without any explanations.`;
             // value = await openAIService.rewriteContent(value, prompt);
             console.log(`✅ Successfully rewrote content for ${metafield.namespace}.${metafield.key}`);
           } catch (error) {
             console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
             // Fall back to manual replacement if OpenAI fails
             if (value.includes('Soundbox Store')) {
-              value = value.replace(/Soundbox Store/g, 'Quell Design').replace(/Sound box Store/g, 'Quell Design');
+              value = this.replaceSourceSiteNames(value);
             }
             if (value.includes('soundboxstore.com')) {
               value = value.replace(/soundboxstore.com/g, 'quelldesign.com');
@@ -862,7 +873,7 @@ export class ShopifyProductSyncService {
             console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
             // Fall back to manual replacement if OpenAI fails
             if (value.includes('Soundbox Store')) {
-              value = value.replace(/Soundbox Store/g, 'Quell Design');
+              value = this.replaceSourceSiteNames(value);
             }
           }
         }
@@ -931,7 +942,7 @@ export class ShopifyProductSyncService {
             console.error(`❌ Error rewriting content for ${metafield.namespace}.${metafield.key}:`, error);
             // Fall back to manual replacement if OpenAI fails
             if (value.includes('Soundbox Store')) {
-              value = value.replace(/Soundbox Store/g, 'Quell Design');
+              value = this.replaceSourceSiteNames(value);
             }
           }
         }

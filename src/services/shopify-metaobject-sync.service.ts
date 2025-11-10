@@ -71,11 +71,22 @@ class MappingNotFoundError extends Error {
 export class ShopifyMetaobjectSyncService {
   private graphqlClient: GraphQLClient;
   private externalMetaobjectsApiUrl: string;
+  private targetSiteTitle: string;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalMetaobjectsApiUrl = `${externalApiBaseUrl}/api/metaobjects`;
+    this.targetSiteTitle = process.env.TARGET_SITE_TITLE || 'Target Site';
+  }
+
+  /**
+   * Replace source site names with target site name
+   */
+  private replaceSourceSiteNames(text: string): string {
+    return text
+      .replace(/Soundbox Store/g, this.targetSiteTitle)
+      .replace(/Sound box Store/g, this.targetSiteTitle);
   }
 
   // Generate a hash for a metaobject based on its properties
@@ -175,7 +186,7 @@ export class ShopifyMetaobjectSyncService {
 
       // Handle string replacement first (applies to all string-based values potentially)
       if (typeof processedValue === 'string') {
-        processedValue = processedValue.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+        processedValue = this.replaceSourceSiteNames(processedValue);
       }
 
       // Handle file_reference type

@@ -10,13 +10,14 @@ class OpenAIService {
   private readonly CACHE_PREFIX = 'openai:rewrite:';
 
   constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is required in environment variables');
+      throw new Error('OPENROUTER_API_KEY is required in environment variables');
     }
-    
+
     this.client = new OpenAI({
       apiKey: apiKey,
+      baseURL: 'https://openrouter.ai/api/v1',
     });
   }
 
@@ -31,8 +32,10 @@ class OpenAIService {
    */
   async rewriteContent(text: string, prompt?: string): Promise<string> {
     try {
+      const targetSiteTitle = process.env.TARGET_SITE_TITLE || 'Target Site';
+
       // Default instruction includes note about preserving JSON structure and avoiding explanations
-      const defaultInstruction = 'Rewrite the following text with only some changes to wording to make it difference but still keep the same meaning. Replace any occurrence of "Soundbox Store" with "Quell Design". If the text contains JSON, preserve the exact JSON structure and only modify text content minimally. Do not modify any URLs or Shopify IDs. Only provide the rewritten text without any additional explanations, comments, or formatting.';
+      const defaultInstruction = `Rewrite the following text with only some changes to wording to make it difference but still keep the same meaning. Replace any occurrence of "Soundbox Store" with "${targetSiteTitle}". If the text contains JSON, preserve the exact JSON structure and only modify text content minimally. Do not modify any URLs or Shopify IDs. Only provide the rewritten text without any additional explanations, comments, or formatting.`;
       const instruction = prompt || defaultInstruction;
 
       // Create a cache key based on the text and instruction
@@ -44,13 +47,14 @@ class OpenAIService {
       // Check cache first
       const cachedResult = await redisService.get<string>(cacheKey);
       if (cachedResult) {
-        console.log('Using cached OpenAI response');
+        console.log('Using cached response');
         return cachedResult;
       }
       
-      console.log('Cache miss. Calling OpenAI API...');
+      console.log('Cache miss. Calling OpenRouter API...');
+      const model = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
       const response = await this.client.chat.completions.create({
-        model: 'gpt-4.1-mini', // Can be configured based on requirements
+        model: model, // Can be configured via OPENROUTER_MODEL env variable
         messages: [
           { role: 'system', content: instruction },
           { role: 'user', content: text }
@@ -65,7 +69,7 @@ class OpenAIService {
 
       return result;
     } catch (error) {
-      console.error('Error rewriting content with OpenAI:', error);
+      console.error('Error rewriting content with OpenRouter:', error);
       throw error;
     }
   }

@@ -4,7 +4,12 @@
     "build": "tsc",
     "start": "ts-node src/index.ts",
     "dev": "ts-node src/index.ts",
-    "variant-mappings": "ts-node src/scripts/check-variant-mappings.ts"
+    "variant-mappings": "ts-node src/scripts/check-variant-mappings.ts",
+    "test": "ts-node src/tests/index.test.ts",
+    "test:openai": "ts-node src/tests/openai.service.test.ts",
+    "test:mongodb": "ts-node src/tests/mongodb.test.ts",
+    "test:redis": "ts-node src/tests/redis.test.ts",
+    "test:shopify": "ts-node src/tests/shopify.test.ts"
   },
   "dependencies": {
     "@types/axios": "^0.14.4",

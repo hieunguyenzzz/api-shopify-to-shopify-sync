@@ -82,11 +82,22 @@ interface ExternalPagesResponse {
 export class ShopifyPageSyncService {
   private graphqlClient: GraphQLClient;
   private externalPagesApiUrl: string;
+  private targetSiteTitle: string;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalPagesApiUrl = `${externalApiBaseUrl}/api/pages`;
+    this.targetSiteTitle = process.env.TARGET_SITE_TITLE || 'Target Site';
+  }
+
+  /**
+   * Replace source site names with target site name
+   */
+  private replaceSourceSiteNames(text: string): string {
+    return text
+      .replace(/Soundbox Store/g, this.targetSiteTitle)
+      .replace(/Sound box Store/g, this.targetSiteTitle);
   }
 
   // Generate a hash for a page based on its properties
@@ -165,7 +176,7 @@ export class ShopifyPageSyncService {
       console.log(`🔧 Preparing page data for sync: ${externalPage.title}`);
       
       const existingPage = await this.checkPageByHandle(externalPage.handle);
-      const processedBodyHtml = externalPage.bodyHtml?.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design");
+      const processedBodyHtml = externalPage.bodyHtml ? this.replaceSourceSiteNames(externalPage.bodyHtml) : undefined;
       
       const processedMetafields = externalPage.metafields 
         ? await Promise.all(externalPage.metafields.map(async (metafield) => {
@@ -189,7 +200,7 @@ export class ShopifyPageSyncService {
               return {
                 namespace: metafield.namespace,
                 key: metafield.key,
-                value: metafield.value.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
+                value: typeof metafield.value === 'string' ? this.replaceSourceSiteNames(metafield.value) : metafield.value,
                 type: metafield.type,
               };
             }
@@ -200,7 +211,7 @@ export class ShopifyPageSyncService {
       const finalMetafields = processedMetafields;
 
       const pageInput = {
-        title: externalPage.title.replace(/Soundbox Store/g, "Quell Design").replace(/Sound box Store/g, "Quell Design"),
+        title: this.replaceSourceSiteNames(externalPage.title),
         handle: externalPage.handle,
         body: processedBodyHtml,
         isPublished: true,
