@@ -2,14 +2,15 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 import { GraphQLClient } from 'graphql-request';
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
-import { 
+import {
   COLLECTION_CREATE_MUTATION,
   COLLECTION_UPDATE_MUTATION,
   COLLECTION_BY_HANDLE_QUERY,
   COLLECTION_ADD_PRODUCTS_MUTATION,
   COLLECTION_PRODUCTS_QUERY,
   COLLECTION_DELETE_MUTATION,
-  COLLECTION_PUBLISH_MUTATION
+  COLLECTION_PUBLISH_MUTATION,
+  PUBLICATIONS_QUERY
 } from '../graphql/shopify-mutations';
 import mongoDBCollectionService from './mongodb-collection.service';
 import crypto from 'crypto';
@@ -189,6 +190,18 @@ interface ProductsCount {
   count: number;
 }
 
+// Add interface for publications query response
+interface PublicationsResponse {
+  publications: {
+    edges: Array<{
+      node: {
+        id: string;
+        name: string;
+      };
+    }>;
+  };
+}
+
 // Add interface for publish collection response
 interface CollectionPublishResponse {
   publishablePublish: {
@@ -202,7 +215,7 @@ interface CollectionPublishResponse {
       field: string;
       message: string;
     }>;
-  }
+  };
 }
 
 // Add interface for CollectionProducts query response
@@ -226,11 +239,51 @@ interface CollectionProductsResponse {
 class ShopifyCollectionSyncService {
   private graphqlClient: GraphQLClient;
   private externalCollectionsApiUrl: string;
+  private onlineStorePublicationId: string | null = null;
 
   constructor() {
     this.graphqlClient = createShopifyGraphQLClient();
     const externalApiBaseUrl = process.env.EXTERNAL_API_URL || 'http://localhost:5173';
     this.externalCollectionsApiUrl = `${externalApiBaseUrl}/api/collections`;
+  }
+
+  // Fetch and cache the Online Store publication ID
+  private async getOnlineStorePublicationId(): Promise<string | null> {
+    // Return cached value if available
+    if (this.onlineStorePublicationId) {
+      return this.onlineStorePublicationId;
+    }
+
+    try {
+      console.log('🔍 Fetching publications (sales channels)...');
+      const response = await this.graphqlClient.request<PublicationsResponse>(
+        PUBLICATIONS_QUERY
+      );
+
+      // Look for "Online Store" publication
+      const onlineStore = response.publications.edges.find(
+        edge => edge.node.name === 'Online Store'
+      );
+
+      if (onlineStore) {
+        this.onlineStorePublicationId = onlineStore.node.id;
+        console.log(`✅ Found Online Store publication ID: ${this.onlineStorePublicationId}`);
+        return this.onlineStorePublicationId;
+      }
+
+      // If "Online Store" not found, use the first publication
+      if (response.publications.edges.length > 0) {
+        this.onlineStorePublicationId = response.publications.edges[0].node.id;
+        console.warn(`⚠️ "Online Store" publication not found. Using first available publication: ${response.publications.edges[0].node.name} (ID: ${this.onlineStorePublicationId})`);
+        return this.onlineStorePublicationId;
+      }
+
+      console.error('❌ No publications found in the store');
+      return null;
+    } catch (error) {
+      console.error('❌ Error fetching publications:', error);
+      return null;
+    }
   }
 
   // Fetch collections from external API
@@ -474,14 +527,25 @@ class ShopifyCollectionSyncService {
   // Helper method to publish a collection to the current channel
   private async publishCollection(shopifyCollectionId: string): Promise<boolean> {
     try {
-      console.log(`📢 Publishing collection to current channel: ${shopifyCollectionId}`);
+      // Get the publication ID
+      const publicationId = await this.getOnlineStorePublicationId();
+
+      if (!publicationId) {
+        console.warn(`⚠️ No publication ID available. Skipping publish for collection ${shopifyCollectionId}`);
+        return false;
+      }
+
+      console.log(`📢 Publishing collection to Online Store channel: ${shopifyCollectionId}`);
       const response = await this.graphqlClient.request<CollectionPublishResponse>(
         COLLECTION_PUBLISH_MUTATION,
-        { id: shopifyCollectionId }
+        {
+          id: shopifyCollectionId,
+          publicationId: publicationId
+        }
       );
 
       if (response.publishablePublish.userErrors?.length > 0) {
-        console.error(`❌ Shopify API Error publishing collection ${shopifyCollectionId}:`, 
+        console.error(`❌ Shopify API Error publishing collection ${shopifyCollectionId}:`,
                       response.publishablePublish.userErrors);
         return false;
       }
@@ -492,7 +556,7 @@ class ShopifyCollectionSyncService {
       }
 
       const publishedOnPublication = response.publishablePublish.publishable.publishedOnPublication;
-      console.log(`✅ Successfully published collection ${shopifyCollectionId} to current channel. Published on publication: ${publishedOnPublication}`);
+      console.log(`✅ Successfully published collection ${shopifyCollectionId} to Online Store. Published: ${publishedOnPublication}`);
       return true;
     } catch (error) {
       console.error(`❌ Error publishing collection ${shopifyCollectionId}:`, error);

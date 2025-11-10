@@ -360,11 +360,25 @@ export const COLLECTION_DELETE_MUTATION = `
   }
 `;
 
+// Query to fetch publications (sales channels)
+export const PUBLICATIONS_QUERY = `
+  query getPublications {
+    publications(first: 10) {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 export const COLLECTION_PUBLISH_MUTATION = `
-  mutation publishablePublish($id: ID!) {
-    publishablePublish(id: $id, input: [{publicationId: "gid://shopify/Publication/170777084248"}]) {
+  mutation publishablePublish($id: ID!, $publicationId: ID!) {
+    publishablePublish(id: $id, input: [{publicationId: $publicationId}]) {
       publishable {
-        publishedOnPublication(publicationId: "gid://shopify/Publication/170777084248")
+        publishedOnPublication(publicationId: $publicationId)
       }
       shop {
         id
