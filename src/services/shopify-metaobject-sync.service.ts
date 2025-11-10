@@ -11,6 +11,7 @@ import {
 import { createShopifyGraphQLClient } from '../utils/shopify-graphql-client';
 import { metaobjectMappingService } from './metaobject-mapping.service';
 import MongoDBService from './mongodb.service';
+import { shopifyMetaobjectDefinitionSyncService } from './shopify-metaobject-definition-sync.service';
 // Load environment variables
 dotenv.config();
 import { openAIService } from './openai.service';
@@ -549,7 +550,18 @@ export class ShopifyMetaobjectSyncService {
   async syncMetaobjects(type: string, limit?: number): Promise<ShopifyMetaobject[]> {
     try {
       console.log(`🔄 Starting sync of metaobjects for type: ${type}`);
-      
+
+      // Determine the target Shopify type
+      const shopifyType = type === 'meeting_rooms_features' ? 'product_rooms_features' : type;
+
+      // Ensure the metaobject definition exists before syncing instances
+      console.log(`🔍 Ensuring metaobject definition exists for type: ${shopifyType}`);
+      const definitionExists = await shopifyMetaobjectDefinitionSyncService.ensureDefinitionExists(shopifyType);
+
+      if (!definitionExists) {
+        throw new Error(`Failed to ensure metaobject definition exists for type: ${shopifyType}`);
+      }
+
       // Fetch all external metaobjects
       const externalMetaobjects = await this.fetchExternalMetaobjects(type);
       

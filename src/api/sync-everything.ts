@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { shopifyFileSyncService } from '../services/shopify-file-sync.service';
 import { shopifyRedirectSyncService } from '../services/shopify-redirect-sync.service';
 import { shopifyMetaobjectSyncService } from '../services/shopify-metaobject-sync.service';
+import { shopifyMetaobjectDefinitionSyncService } from '../services/shopify-metaobject-definition-sync.service';
 import { shopifyPageSyncService } from '../services/shopify-page-sync.service';
 import { shopifyCollectionSyncService } from '../services/shopify-collection-sync.service';
 import { shopifyProductSyncService } from '../services/shopify-product-sync.service';
@@ -23,15 +24,39 @@ interface SyncResults {
 }
 
 /**
+ * Ensure all metaobject definitions exist
+ */
+async function ensureAllMetaobjectDefinitionsExist(): Promise<void> {
+  console.log('🔧 Ensuring all metaobject definitions exist...');
+
+  // Map meeting_rooms_features to product_rooms_features
+  const definitionTypes = validMetaobjectTypes.map(type =>
+    type === 'meeting_rooms_features' ? 'product_rooms_features' : type
+  );
+
+  // Remove duplicates
+  const uniqueTypes = [...new Set(definitionTypes)];
+
+  for (const type of uniqueTypes) {
+    await shopifyMetaobjectDefinitionSyncService.ensureDefinitionExists(type);
+  }
+
+  console.log('✅ All metaobject definitions are ready');
+}
+
+/**
  * Syncs all types of metaobjects sequentially
  */
 async function syncAllMetaobjectTypes(limit?: number): Promise<Record<string, any>> {
   const results: Record<string, any> = {};
-  
+
+  // First, ensure all definitions exist
+  await ensureAllMetaobjectDefinitionsExist();
+
   for (const type of validMetaobjectTypes) {
     results[type] = await shopifyMetaobjectSyncService.syncMetaobjects(type, limit);
   }
-  
+
   return results;
 }
 

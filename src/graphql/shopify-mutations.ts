@@ -418,4 +418,143 @@ export const URL_REDIRECTS_QUERY = `
   }
 `;
 
+// Metaobject Definition Queries and Mutations
+export const METAOBJECT_DEFINITIONS_QUERY = `
+  query getMetaobjectDefinitions($first: Int!) {
+    metaobjectDefinitions(first: $first) {
+      edges {
+        node {
+          id
+          name
+          type
+          displayNameKey
+          description
+          access {
+            admin
+            storefront
+          }
+          fieldDefinitions {
+            key
+            name
+            description
+            required
+            type {
+              name
+              category
+            }
+            validations {
+              name
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const METAOBJECT_DEFINITION_CREATE_MUTATION = `
+  mutation metaobjectDefinitionCreate($definition: MetaobjectDefinitionCreateInput!) {
+    metaobjectDefinitionCreate(definition: $definition) {
+      metaobjectDefinition {
+        id
+        name
+        type
+        displayNameKey
+        description
+        access {
+          admin
+          storefront
+        }
+        fieldDefinitions {
+          key
+          name
+          description
+          required
+          type {
+            name
+            category
+          }
+          validations {
+            name
+            value
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+export const METAOBJECT_DEFINITION_UPDATE_MUTATION = `
+  mutation metaobjectDefinitionUpdate($id: ID!, $definition: MetaobjectDefinitionUpdateInput!) {
+    metaobjectDefinitionUpdate(id: $id, definition: $definition) {
+      metaobjectDefinition {
+        id
+        name
+        type
+        displayNameKey
+        description
+        access {
+          admin
+          storefront
+        }
+        fieldDefinitions {
+          key
+          name
+          description
+          required
+          type {
+            name
+            category
+          }
+          validations {
+            name
+            value
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+export const METAOBJECT_DEFINITION_BY_TYPE_QUERY = `
+  query getMetaobjectDefinitionByType($type: String!) {
+    metaobjectDefinitionByType(type: $type) {
+      id
+      name
+      type
+      displayNameKey
+      description
+      access {
+        admin
+        storefront
+      }
+      fieldDefinitions {
+        key
+        name
+        description
+        required
+        type {
+          name
+          category
+        }
+        validations {
+          name
+          value
+        }
+      }
+    }
+  }
+`;
+
 // Add more Shopify-related mutations as needed 
