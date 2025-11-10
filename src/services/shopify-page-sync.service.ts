@@ -47,11 +47,16 @@ interface ShopifyPage {
 
 interface PageEdge {
   node: ShopifyPage;
+  cursor: string;
 }
 
 interface PagesResponse {
   pages: {
     edges: PageEdge[];
+    pageInfo: {
+      hasNextPage: boolean;
+      endCursor: string;
+    };
   };
 }
 
@@ -143,25 +148,37 @@ export class ShopifyPageSyncService {
   async checkPageByHandle(handle: string): Promise<ShopifyPage | null> {
     try {
       console.log(`🔍 Checking for existing page with handle: ${handle}`);
-      
-      const response = await this.graphqlClient.request<PagesResponse>(
-        PAGES_QUERY, 
-        { 
-          query: `handle:${handle}`,
-          first: 1
-        }
-      );
 
-      // Extract the first page from the edges array if it exists
-      const existingPage = response.pages.edges.length > 0 
-        ? response.pages.edges[0].node 
-        : null;
-      
-      if (existingPage) {
-        console.log(`✅ Found existing page: ${existingPage.title} (ID: ${existingPage.id})`);
-        return existingPage;
+      // Fetch all pages and filter by handle (Shopify pages API doesn't support query parameter)
+      let allPages: ShopifyPage[] = [];
+      let hasNextPage = true;
+      let after: string | null = null;
+
+      while (hasNextPage) {
+        const response: PagesResponse = await this.graphqlClient.request<PagesResponse>(
+          PAGES_QUERY,
+          {
+            first: 250,
+            after
+          }
+        );
+
+        allPages = allPages.concat(
+          response.pages.edges.map((edge: PageEdge) => edge.node)
+        );
+
+        hasNextPage = response.pages.pageInfo.hasNextPage;
+        after = response.pages.pageInfo.endCursor;
       }
-      
+
+      // Filter by handle
+      const page = allPages.find(p => p.handle === handle);
+
+      if (page) {
+        console.log(`✅ Found existing page: ${page.title} (ID: ${page.id})`);
+        return page;
+      }
+
       console.log(`❌ No page found with handle: ${handle}`);
       return null;
     } catch (error) {

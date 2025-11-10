@@ -132,8 +132,8 @@ export const PAGE_UPDATE_MUTATION = `
 `;
 
 export const PAGES_QUERY = `
-  query getPages($query: String, $first: Int) {
-    pages(query: $query, first: $first) {
+  query getPages($first: Int, $after: String) {
+    pages(first: $first, after: $after) {
       edges {
         node {
           id
@@ -142,7 +142,7 @@ export const PAGES_QUERY = `
           body
           bodySummary
           createdAt
-          updatedAt        
+          updatedAt
           metafields(first: 50) {
             edges {
               node {
@@ -154,6 +154,11 @@ export const PAGES_QUERY = `
             }
           }
         }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
       }
     }
   }

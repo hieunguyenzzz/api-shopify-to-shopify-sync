@@ -53,6 +53,7 @@ class OpenAIService {
       
       console.log('Cache miss. Calling OpenRouter API...');
       const model = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+      console.log(`Using model: ${model}`);
       const response = await this.client.chat.completions.create({
         model: model, // Can be configured via OPENROUTER_MODEL env variable
         messages: [
