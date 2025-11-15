@@ -59,7 +59,7 @@ export class ShopifyProductSyncService {
     let variantsString = 'null';
     if (product.variants && product.variants.length > 0) {
       const sortedVariants = [...product.variants].sort((a, b) => {
-        if (a.sku !== b.sku) return a.sku.localeCompare(b.sku);
+        if ((a?.sku || '') !== (b?.sku || '')) return (a?.sku || '').localeCompare(b?.sku || '');
         // Convert prices to numbers before comparing
         const priceA = typeof a.price === 'string' ? parseFloat(a.price) : a.price;
         const priceB = typeof b.price === 'string' ? parseFloat(b.price) : b.price;
@@ -68,11 +68,11 @@ export class ShopifyProductSyncService {
       
       variantsString = sortedVariants.map(v => {
         const optionsString = v.selectedOptions
-          .sort((a, b) => a.name.localeCompare(b.name))
+          .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''))
           .map(o => `${o.name}:${o.value}`)
           .join('|');
-        
-        return `${v.sku}|${v.price}|${v.compareAtPrice || ''}|${optionsString}`;
+
+        return `${v.sku || ''}|${v.price}|${v.compareAtPrice || ''}|${optionsString}`;
       }).join(';');
     }
 
@@ -80,7 +80,7 @@ export class ShopifyProductSyncService {
     let optionsString = 'null';
     if (product.options && product.options.length > 0) {
       optionsString = product.options
-        .sort((a, b) => a.name.localeCompare(b.name))
+        .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''))
         .map(o => {
           const sortedValues = [...o.values].sort();
           return `${o.name}:${sortedValues.join('|')}`;
@@ -102,10 +102,10 @@ export class ShopifyProductSyncService {
     if (product.metafields && product.metafields.length > 0) {
       metafieldsString = product.metafields
         .sort((a, b) => {
-          if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
-          return a.key.localeCompare(b.key);
+          if ((a?.namespace || '') !== (b?.namespace || '')) return (a?.namespace || '').localeCompare(b?.namespace || '');
+          return (a?.key || '').localeCompare(b?.key || '');
         })
-        .map(m => `${m.namespace}:${m.key}:${m.value}`)
+        .map(m => `${m.namespace}:${m.key}:${m.value || ''}`)
         .join('|');
     }
 
@@ -116,17 +116,17 @@ export class ShopifyProductSyncService {
       
       if (variantsWithMetafields.length > 0) {
         variantMetafieldsString = variantsWithMetafields
-          .sort((a, b) => a.sku.localeCompare(b.sku))
+          .sort((a, b) => (a?.sku || '').localeCompare(b?.sku || ''))
           .map(variant => {
             const sortedMetafields = variant.metafields
               .sort((a, b) => {
-                if (a.namespace !== b.namespace) return a.namespace.localeCompare(b.namespace);
-                return a.key.localeCompare(b.key);
+                if ((a?.namespace || '') !== (b?.namespace || '')) return (a?.namespace || '').localeCompare(b?.namespace || '');
+                return (a?.key || '').localeCompare(b?.key || '');
               })
-              .map(m => `${m.namespace}:${m.key}:${m.value}`)
+              .map(m => `${m.namespace}:${m.key}:${m.value || ''}`)
               .join('~');
-            
-            return `${variant.sku}:${sortedMetafields}`;
+
+            return `${variant.sku || ''}:${sortedMetafields}`;
           })
           .join(';');
       }
@@ -752,7 +752,8 @@ export class ShopifyProductSyncService {
   // Add custom number metafields
   private addCustomNumberMetafields(productInput: ProductSetInput, externalProduct: ExternalProduct): void {
     const numberMetafields = [
-      { namespace: 'custom', key: 'seats', type: 'single_line_text_field' },
+      { namespace: 'custom', key: 'seats', type: 'number_integer' },
+      { namespace: 'custom', key: 'instagram_feed_id', type: 'number_integer' },
       { namespace: 'seo', key: 'hidden', type: 'number_integer' }
     ];
 

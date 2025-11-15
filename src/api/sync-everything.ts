@@ -3,6 +3,7 @@ import { shopifyFileSyncService } from '../services/shopify-file-sync.service';
 import { shopifyRedirectSyncService } from '../services/shopify-redirect-sync.service';
 import { shopifyMetaobjectSyncService } from '../services/shopify-metaobject-sync.service';
 import { shopifyMetaobjectDefinitionSyncService } from '../services/shopify-metaobject-definition-sync.service';
+import { ShopifyMetafieldDefinitionSyncService } from '../services/shopify-metafield-definition-sync.service';
 import { shopifyPageSyncService } from '../services/shopify-page-sync.service';
 import { shopifyCollectionSyncService } from '../services/shopify-collection-sync.service';
 import { shopifyProductSyncService } from '../services/shopify-product-sync.service';
@@ -89,21 +90,26 @@ export const syncEverything = async (req: Request, res: Response) => {
     // Step 3: Sync metaobjects
     console.log('🔄 Starting sync-everything process: Step 3 - Metaobjects');
     results.metaobjects = await syncAllMetaobjectTypes(limit);
-    
-    // Step 4: Sync pages
-    console.log('🔄 Starting sync-everything process: Step 4 - Pages');
+
+    // Step 4: Sync product metafield definitions (NEW - detect and create before products)
+    console.log('🔄 Starting sync-everything process: Step 4 - Product Metafield Definitions');
+    const metafieldDefService = new ShopifyMetafieldDefinitionSyncService();
+    await metafieldDefService.syncMetafieldDefinitions();
+
+    // Step 5: Sync pages
+    console.log('🔄 Starting sync-everything process: Step 5 - Pages');
     results.pages = await shopifyPageSyncService.syncPages(limit);
-    
-    // Step 5: Sync collections
-    console.log('🔄 Starting sync-everything process: Step 5 - Collections');
+
+    // Step 6: Sync collections
+    console.log('🔄 Starting sync-everything process: Step 6 - Collections');
     results.collections = await shopifyCollectionSyncService.syncCollections(limit);
-    
-    // Step 6: Sync products
-    console.log('🔄 Starting sync-everything process: Step 6 - Products');
+
+    // Step 7: Sync products
+    console.log('🔄 Starting sync-everything process: Step 7 - Products');
     results.products = await shopifyProductSyncService.syncProducts(limit);
-    
-    // Step 7: Sync price lists
-    console.log('🔄 Starting sync-everything process: Step 7 - Price Lists');
+
+    // Step 8: Sync price lists
+    console.log('🔄 Starting sync-everything process: Step 8 - Price Lists');
     results.priceLists = await shopifyPriceListSyncService.syncPriceLists();
     
     // Return success response with all results

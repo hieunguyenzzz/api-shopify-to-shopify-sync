@@ -32,3 +32,31 @@ When Shopify's API rate limit is hit, the application will:
 
 the EXTERNAL_API_URL is source data
 SHOPIFY_TOKEN and SHOPIFY_APP_URL belong to target shopify data
+
+## Sync Order
+
+The sync-everything endpoint processes data in this order:
+
+1. **Files** - Sync media files and assets
+2. **Redirects** - Sync URL redirects
+3. **Metaobjects** - Sync custom metaobject data (FAQs, features, etc.)
+4. **Product Metafield Definitions** - Detect and create all required metafield definitions dynamically from source products
+5. **Pages** - Sync pages
+6. **Collections** - Sync product collections
+7. **Products** - Sync products (after metafield definitions are created)
+8. **Price Lists** - Sync price lists
+
+## Product Metafield Definition Sync
+
+The application automatically detects and creates metafield definitions before syncing products:
+
+- **Dynamic Detection**: Scans all products from the source API to identify required metafield definitions
+- **Auto-Creation**: Creates missing metafield definitions in the target store
+- **Coverage**: Handles both product-level and variant-level metafields
+- **Types Supported**: All Shopify metafield types including single_line_text_field, multi_line_text_field, list.metaobject_reference, file_reference, etc.
+
+This prevents errors like "Value requires that you have a metafield definition with the key: X" during product sync.
+
+## Some terms I might use when prompting
+
+when I mention product sync, I am referring to api/sync-products.ts
